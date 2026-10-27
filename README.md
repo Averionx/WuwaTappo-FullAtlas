@@ -6,7 +6,9 @@
 
 ## 下载 1.0
 
-前往 **[Releases 下载页面](https://github.com/Averionx/WuwaTappo-FullAtlas/releases/latest)**，在 Assets 中下载 `WuwaTappo全图鉴版-1.0-Setup.exe`。普通使用者无需下载源码，也无需另装 Python、Node.js 或手动复制整个文件夹。
+**[下载安装包 1.0（Windows x64）](https://github.com/Averionx/WuwaTappo-FullAtlas/releases/download/v1.0/WuwaTappo-FullAtlas-1.0-Setup.exe)** · [版本页面](https://github.com/Averionx/WuwaTappo-FullAtlas/releases/latest)
+
+GitHub 下载文件名为 `WuwaTappo-FullAtlas-1.0-Setup.exe`，安装界面和快捷方式名称为 **WuwaTappo全图鉴版**。普通使用者无需下载源码，也无需另装 Python、Node.js 或手动复制整个文件夹。
 
 - 系统：Windows 10 / 11，x64。
 - 修改版版本：**1.0**；本次适配的官方程序版本：**1.0.1**。两者版本号独立。
@@ -30,6 +32,7 @@
 - 原版可以单独保留，本安装包不覆盖原版。卸载时会先移除本安装目录对应的防火墙规则。
 - 若开关异常或关闭后仍无法连接，先使用开始菜单里的 **恢复本地版联网**。服务端维护、账号状态和官方强制升级不属于本地断网规则故障。
 - 请从本仓库 Releases 下载并核对 `SHA256SUMS.txt`。发布包没有商业代码签名；遇到系统拦截时先核对来源和哈希，不要关闭系统安全防护。
+- 若将下载文件改为中文名 `WuwaTappo全图鉴版-1.0-Setup.exe`，可使用 `SHA256SUMS-ChineseName.txt` 校验；重命名不影响安装。
 - 专用 WebView2 运行时不会随系统共享版本自动升级。需要通过后续发行版更新它。
 
 ## 新增图鉴和强制更新

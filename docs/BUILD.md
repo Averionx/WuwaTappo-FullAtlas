@@ -27,4 +27,4 @@ python tests/test_sync_cache.py
 
 控制器测试需要先完成构建以读取 `build/payload/cache`。仅测试逻辑或缓存单元不等于通过系统防火墙实测。发布前必须安装到包含空格或中文的新目录，验证本地模式、普通模式、更新入口和卸载清理。
 
-`build/`、`dist/` 和 `inputs/` 均不进入 Git。将 `dist/WuwaTappo全图鉴版-1.0-Setup.exe` 及其 SHA-256 清单作为 `v1.0` Release 附件上传。
+`build/`、`dist/` 和 `inputs/` 均不进入 Git。本地输出 `dist/WuwaTappo全图鉴版-1.0-Setup.exe`。GitHub 会改写附件名中的中文，因此线上文件统一使用 `WuwaTappo-FullAtlas-1.0-Setup.exe`，并提供对应的 SHA-256 清单；安装程序内部仍使用中文名称。

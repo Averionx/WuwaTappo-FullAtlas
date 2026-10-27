@@ -1,0 +1,16 @@
+build/
+dist/
+inputs/
+__pycache__/
+*.pyc
+*.spec
+*.log
+node_modules/
+local_config.json
+offline_state.json
+profile/
+cache/
+cache_*/
+client_diagnostics.jsonl
+*test_results*.json
+release_upload/

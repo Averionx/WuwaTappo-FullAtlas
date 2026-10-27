@@ -1,0 +1,66 @@
+{
+  "version": "1.0",
+  "verified_date": "2026-10-27",
+  "installer_sha256": "4ea70173c0498f45f188d293379ea547a20b6152f4dbb79201c6f18e38459588",
+  "installer_bytes": 409738579,
+  "installer": {
+    "private_webview_included": true,
+    "install_exit_code": 0,
+    "version": "1.0",
+    "private_webview_signature": "Valid",
+    "private_profile_created": true,
+    "production_sha256": "01614ae3dca4ecf64867b3dc2b98131d12aefa29b2566c1ba254e05a94f9a0be",
+    "asset_count": 3098,
+    "atlas_count": 899,
+    "ok": true,
+    "external_python_not_required": true,
+    "default_ready_and_off": true,
+    "unicode_and_space_path": true,
+    "uninstall_exit_code": 0,
+    "per_install_token_is_unique": true,
+    "own_firewall_rules_after_uninstall": 0,
+    "production_booted_offline": true,
+    "offline_firewall_verified": true,
+    "python_license_included": true
+  },
+  "native": [
+    {
+      "kind": "public_qa_default",
+      "offline": false,
+      "version": "1.0.1"
+    },
+    {
+      "kind": "public_qa_gallery",
+      "imageCount": 100,
+      "loadedCount": 100,
+      "unowned": 0
+    },
+    {
+      "kind": "public_qa_network",
+      "blocked": [
+        {
+          "name": "fetch",
+          "blocked": true
+        },
+        {
+          "name": "native",
+          "blocked": true
+        }
+      ]
+    },
+    {
+      "kind": "public_qa_bag",
+      "imageCount": 21,
+      "loadedCount": 21
+    },
+    {
+      "kind": "public_qa_restored",
+      "version": "1.0.1",
+      "offline": false,
+      "forceLocked": false
+    }
+  ],
+  "controller_checks_passed": 27,
+  "cache_sync_tests_passed": 4,
+  "account_login_or_room_join_tested": false
+}

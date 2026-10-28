@@ -49,7 +49,7 @@ def named(meta, name):
 # Shared public functions retain readable names between these releases.
 shared = replace(shared, 'loaderModule.init(kurodataConfig);\nwindow.kurodata = loaderModule;\ninitTrackCommonProps();\ninitFrontendAlertReporting();', '''let localOnlineServicesStarted = false;
 function localStartOnlineServices() {
- if (localOnlineServicesStarted || window.__WUWA_LOCAL_ATLAS__?.enabled.value) return;
+ if (localOnlineServicesStarted) return;
  localOnlineServicesStarted = true;
  loaderModule.init(kurodataConfig); window.kurodata = loaderModule;
  initTrackCommonProps(); initFrontendAlertReporting();
@@ -57,23 +57,23 @@ function localStartOnlineServices() {
 for name in ['invoke$1', 'invoke']:
     anchor = f'async function {name}(e, t = {{}}, n) {{'
     shared = replace(shared, anchor, anchor + '\n window.__WUWA_LOCAL_ATLAS__?.checkInvoke(e, t);')
-for name in ['loadRemoteDictionary(e, t)', 'ensureAppearanceAssetCatalog(e)']:
+for name in ['ensureAppearanceAssetCatalog(e)']:
     anchor = 'async function ' + name + ' {'
     shared = replace(shared, anchor, anchor + '\n if (window.__WUWA_LOCAL_ATLAS__?.enabled.value) return true;')
 shared = replace(shared, 'function applyCatalog(e, t, n) {', '''function applyCatalog(e, t, n) {
  if (window.__WUWA_LOCAL_ATLAS__?.enabled.value && t !== window.__WUWA_LOCAL_ATLAS__.assetsHost) return;''')
 shared = replace(shared, 'function atlas() {', '''function atlas() {
  if (window.__WUWA_LOCAL_ATLAS__?.enabled.value) return Promise.resolve({code: 0, data: window.__WUWA_LOCAL_ATLAS__.offlineData.value.atlas});''')
-shared = replace(shared, 'function track(e, t, n) {', 'function track(e, t, n) {\n if (window.__WUWA_LOCAL_ATLAS__?.enabled.value) return;')
-for name in ['isAppUpdaterEnabled()', 'isForceUpdateLocked()']:
-    shared = replace(shared, 'function ' + name + ' {', 'function ' + name + ' {\n if (window.__WUWA_LOCAL_ATLAS__?.enabled.value) return false;')
 shared = replace(shared, 'this.instance.interceptors.request.use(t => {', '''this.instance.interceptors.request.use(t => {
- if (window.__WUWA_LOCAL_ATLAS__?.enabled.value) throw window.__WUWA_LOCAL_ATLAS__.offlineError();''')
+ if (window.__WUWA_LOCAL_ATLAS__?.enabled.value && window.__WUWA_LOCAL_ATLAS__.restricted(t.url,t.method)) throw window.__WUWA_LOCAL_ATLAS__.offlineError();''')
 controller = (PROJECT / 'src/local_atlas_controller.js').read_text(encoding='utf-8')
 init = controller + '\nconst localAtlasController = createLocalAtlasController({\n' + \
     'ref, window, storage: localStorage, origin: ' + json.dumps(f'http://127.0.0.1:{config["port"]}') + ',\n' + \
     'token: null' + ''', normalizeAtlasList, resolvePetAssetIdFromAppearanceId, getAppearanceAssetById,
 snapshotCatalog: () => ({assets: appearanceAssetCatalog.value, atlases: appearanceAtlasCatalog.value, host: loadedAssetsHost, ts: loadedAssetsJsonTs}),
+getAccountCumulative: () => globalStore.userInfo ? isFrozenClickCount(globalStore.serverClickTotal) ? globalStore.serverClickTotal : clampClickCountSum(globalStore.serverClickTotal+globalStore.localClickCount) : parseSafeClickCount(globalStore.localClickCount),
+getAccountPending: () => parseSafeClickCount(globalStore.localClickCount),
+catalogConsumer: ['/', '/panel'].includes((window.location.hash || '#/').slice(1).split('?')[0]),
 applyOfflineCatalog: (payload, host) => applyCatalog(buildCatalogMaps(payload), host, Date.now()),
 restoreCatalog: saved => applyCatalog({assets: saved.assets, atlases: saved.atlases}, saved.host, saved.ts),
 onError: error => console.error('[local-gallery]', error)
@@ -109,9 +109,9 @@ def insert_function(name, code):
 bag_loader = function_for(m, main, 'await ' + mi['getBagList'] + '()')
 atlas_loader = function_for(m, main, 'await ' + mi['atlas'] + '()')
 activity_loader = function_for(m, main, 'await ' + mi['activityInfo'] + '()')
-insert_function(bag_loader['name'], f'if(__lg.enabled.value){{{f["bagListLoading"]}=false;return;}}')
 insert_function(atlas_loader['name'], f'if(__lg.enabled.value){{{atlas}=__lg.offlineData.value.atlas;{f["atlasListLoading"]}=false;return;}}')
-insert_function(activity_loader['name'], 'if(__lg.enabled.value){__localRefresh();return;}')
+insert_function(activity_loader['name'], 'try {')
+edits.append((activity_loader['bodyEnd']-1,activity_loader['bodyEnd']-1,'}finally{if(__lg.enabled.value)__localRefresh();}'))
 for action in ['create-room', 'join-room']:
     insert_function(m['cases'][action], f"if(__lg.enabled.value){{{mi['showToast']}('本地全图鉴已开启，无法进入联机。请先关闭开关。');return;}}")
 select_name = m['cases']['select-appearance']
@@ -175,9 +175,9 @@ async function __toggleLocal(event){{try{{await __lg.setEnabled(event.target.che
 async function __syncLocal(){{try{{const status=await __lg.syncCache(true);{pi['showToast']}('本地图鉴已同步：'+(status.result?.atlas_count||'')+'项');}}catch(error){{{pi['showToast']}(error.message);}}}}
 '''
 row = f'''{h}('div',{{class:'setting-item','data-local-gallery-setting':'true'}},[
- {h}('div',{{class:'setting-label'}},[{h}('div',{{class:'setting-title'}},'本地全图鉴（离线）'),{h}('div',{{class:'setting-sub'}},__localBusy.value?'正在切换系统断网状态…':__localEnabled.value?'已开启 · 已断开服务器，联机不可用':'开启全部本地图鉴；关闭后恢复正常联网',1)]),
- {h}('div',{{class:'setting-content'}},[{h}('label',{{class:'setting-switch'}},[{h}('input',{{type:'checkbox',role:'switch','aria-label':'本地全图鉴（离线）',style:'display:block;position:absolute;width:1px;height:1px;opacity:0',checked:__localEnabled.value,disabled:__localBusy.value||__localSync.value.status==='running',onChange:__toggleLocal,onMousedown:{with_modifiers}(()=>{{}},['stop'])}},null,40,['checked','disabled']),{h}('span',{{class:'setting-slider'}})])])]),
- {h}('div',{{class:'setting-item','data-local-gallery-sync':'true'}},[{h}('div',{{class:'setting-label'}},[{h}('div',{{class:'setting-title'}},'更新本地图鉴'),{h}('div',{{class:'setting-sub'}},__localSync.value.status==='running'?'正在同步 '+__localSync.value.done+'/'+__localSync.value.total:'普通联网模式下检查新增图鉴，缓存完整后供离线使用',1)]),{h}('button',{{class:'setting-btn',type:'button',disabled:__localEnabled.value||__localSync.value.status==='running',onClick:__syncLocal}},'检查并同步',8,['disabled'])]),
+ {h}('div',{{class:'setting-label'}},[{h}('div',{{class:'setting-title'}},'本地全图鉴'),{h}('div',{{class:'setting-sub'}},__localBusy.value?'正在切换本地显示模式…':__localEnabled.value?'已开启 · 联机不可用，其他网络功能正常':'开启全部本地图鉴；关闭后恢复账号背包',1)]),
+ {h}('div',{{class:'setting-content'}},[{h}('label',{{class:'setting-switch'}},[{h}('input',{{type:'checkbox',role:'switch','aria-label':'本地全图鉴',style:'display:block;position:absolute;width:1px;height:1px;opacity:0',checked:__localEnabled.value,disabled:__localBusy.value||__localSync.value.status==='running',onChange:__toggleLocal,onMousedown:{with_modifiers}(()=>{{}},['stop'])}},null,40,['checked','disabled']),{h}('span',{{class:'setting-slider'}})])])]),
+ {h}('div',{{class:'setting-item','data-local-gallery-sync':'true'}},[{h}('div',{{class:'setting-label'}},[{h}('div',{{class:'setting-title'}},'更新本地图鉴'),{h}('div',{{class:'setting-sub'}},__localSync.value.status==='running'?'正在同步 '+__localSync.value.done+'/'+__localSync.value.total:'联网检查新增图鉴，本地全图鉴开启时也可同步',1)]),{h}('button',{{class:'setting-btn',type:'button',disabled:__localSync.value.status==='running',onClick:__syncLocal}},'检查并同步',8,['disabled'])]),
 '''
 edits = [(0, 0, f'import {{zzLocalAtlas as __lg}} from "./{shared_name}";\n'),
          (settings['body'] + 1, settings['body'] + 1, setup),
@@ -207,11 +207,16 @@ match = re.search(pattern, panel)
 assert match, 'Favorite toggle layout changed'
 panel = panel[:match.start()] + f'__lg.enabled.value ? __lg.favorite({match[3]}.item.asset_id,!{match[1]}.value) : ' + panel[match.start():]
 
+from integrate_assistant import integrate
+assert config['client_version'] == '1.0.2', 'Desktop assistant requires the verified 1.0.2 adapter'
+shared, main, panel = integrate(PROJECT, BASE, frontend, structure, shared, main, panel, main_name, panel_name)
+extra_patched_assets = [p.name for p in (BASE/'frontend/assets').glob('switchDisplayMonitor-*.js')
+                        if (frontend/'assets'/p.name).read_bytes() != p.read_bytes()]
 for name, text in [(shared_name, shared), (main_name, main), (panel_name, panel)]:
     (frontend / 'assets' / name).write_text(text, encoding='utf-8')
 manifest = {'shared': shared_name, 'main': main_name, 'panel': panel_name,
             'settingsSymbol': settings['variable'], 'atlasSymbol': atlas_component['variable'],
-            'base': str(BASE), 'version': '1.0.1'}
+            'base': str(BASE), 'version': config['client_version']}
 (ROOT / 'build_manifest_v2.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
 # Reuse the independently checked PE resource packer and private-runtime stub.
 packer = (PROJECT / 'tools/pe_packer.py').read_text(encoding='utf-8').split('# Add a read-only PE section', 1)[1]

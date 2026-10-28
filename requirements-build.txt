@@ -2,3 +2,4 @@ PyInstaller==6.16.0
 pefile==2023.2.7
 Brotli==1.2.0
 jsbeautifier==2.0.3
+psutil==7.2.2

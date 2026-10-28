@@ -14,10 +14,10 @@ raw_start = align(len(data), pe.OPTIONAL_HEADER.FileAlignment)
 new_rva = align(max(s.VirtualAddress + max(s.Misc_VirtualSize, s.SizeOfRawData) for s in pe.sections), pe.OPTIONAL_HEADER.SectionAlignment)
 payload = bytearray(); asset_changes = []
 inventory = json.loads((ORIGINAL / 'analysis/assets.json').read_text(encoding='utf-8'))
-for name in [shared_name, main_name, panel_name]:
+for name in [shared_name, main_name, panel_name] + globals().get('extra_patched_assets', []):
     row = next(x for x in inventory if x['path'] == '/assets/' + name)
     plain = (frontend / 'assets' / name).read_bytes()
-    packed = brotli.compress(plain, quality=11)
+    packed = brotli.compress(plain, quality=9)
     while len(payload) % 8: payload.append(0)
     asset_rva = new_rva + len(payload)
     payload += packed

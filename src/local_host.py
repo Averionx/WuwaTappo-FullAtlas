@@ -5,11 +5,38 @@ from urllib.parse import urlparse
 import sys
 import argparse, base64, ctypes, hashlib, json, mimetypes, subprocess, threading, time, re
 from sync_cache import sync as sync_public_cache
+from desktop_assistant import Assistant, PhysicalInput
+from desktop_updater import Updater, apply_update
+
+if '--apply-update' in sys.argv:
+    pos = sys.argv.index('--apply-update')
+    apply_update(sys.argv[pos+1], sys.argv[pos+2])
+    sys.exit(0)
+if '--self-check' in sys.argv:
+    import ssl
+    context = ssl.create_default_context()
+    print(json.dumps({'tls_ready':True,'hostname_verification':context.check_hostname,
+                      'certificate_verification':context.verify_mode == ssl.CERT_REQUIRED}),flush=True)
+    sys.exit(0)
 
 ROOT = Path(sys.executable if getattr(sys,'frozen',False) else __file__).resolve().parent
 CONFIG = json.loads((ROOT / 'local_config.json').read_text(encoding='utf-8-sig'))
 PORT = CONFIG['port']
 TOKEN = CONFIG['token']
+ASSISTANT = Assistant(ROOT, physical=PhysicalInput())
+UPDATER = Updater(ROOT, CONFIG)
+
+def monitor_releases():
+    while True:
+        try:
+            UPDATER.check()
+        except Exception:
+            pass
+        ASSISTANT.update_required = UPDATER.status().get('required') is True
+        time.sleep(1800)
+
+ASSISTANT.update_required = UPDATER.status().get('required') is True
+threading.Thread(target=monitor_releases, daemon=True).start()
 STATE = ROOT / 'offline_state.json'
 LOCK = threading.RLock()
 PROGRAMS = [ROOT / 'WuwaTappo.Local.exe', ROOT / 'runtime/msedgewebview2.exe']
@@ -35,42 +62,16 @@ def desired_offline():
     except (OSError, ValueError):
         return False
 
-def firewall_query():
-    # Check active policy, rule action, direction, all profiles, and executable filter.
-    checks = []
-    for index, program in enumerate(PROGRAMS):
-        for suffix, direction in [('Out', 'Outbound'), ('In', 'Inbound')]:
-            name = f'{PREFIX}.{index}.{suffix}'
-            checks.append(
-                f"$r=Get-NetFirewallRule -PolicyStore ActiveStore -Name {quote(name)} -ErrorAction SilentlyContinue;"
-                f"if(!$r -or $r.Enabled -ne 'True' -or $r.Action -ne 'Block' -or $r.Direction -ne '{direction}' "
-                f"-or $r.Profile -ne 'Any'){{$ok=$false}}else{{"
-                f"$p=$r|Get-NetFirewallApplicationFilter;if($p.Program -ne {quote(program)}){{$ok=$false}}}};")
-    source = ("$ErrorActionPreference='Stop';$ok=$true;"
-              "if(@(Get-NetFirewallProfile -PolicyStore ActiveStore|Where-Object {!$_.Enabled}).Count){$ok=$false};"
-              + ''.join(checks) + "if($ok){'true'}else{'false'}")
-    return powershell(source).splitlines()[-1:] == ['true']
-
 def set_firewall(enabled):
-    if not ctypes.windll.shell32.IsUserAnAdmin():
-        raise PermissionError('需要通过本地版启动器授予 Windows 管理员权限，才能验证系统防火墙断网。')
-    source = "$ErrorActionPreference='Stop';"
+    """Remove only legacy whole-process blocking rules; never create new ones."""
     if enabled:
-        source += ("if(@(Get-NetFirewallProfile -PolicyStore ActiveStore|Where-Object {!$_.Enabled}).Count)"
-                   "{throw 'Windows Firewall has a disabled profile; offline mode was not enabled.'};")
-    for index, program in enumerate(PROGRAMS):
-        if not program.is_file():
-            raise FileNotFoundError(program)
-        for suffix, direction in [('Out', 'Outbound'), ('In', 'Inbound')]:
-            name = f'{PREFIX}.{index}.{suffix}'
-            source += f"Get-NetFirewallRule -Name {quote(name)} -ErrorAction SilentlyContinue|Remove-NetFirewallRule;"
-            if enabled:
-                source += (f"New-NetFirewallRule -Name {quote(name)} -DisplayName {quote(name)} "
-                           f"-Direction {direction} -Action Block -Enabled True -Profile Any "
-                           f"-Program {quote(program)} -Protocol Any|Out-Null;")
-    powershell(source + 'exit 0;')
-    if enabled and not firewall_query():
-        raise RuntimeError('系统防火墙规则未通过验证，未开启本地图鉴。')
+        raise ValueError('Full-process blocking was removed; local mode only blocks rooms.')
+    if not ctypes.windll.shell32.IsUserAnAdmin():
+        result = powershell("$ErrorActionPreference='Stop';$r=@(Get-NetFirewallRule -PolicyStore ActiveStore -Name " + quote(PREFIX+'.*') + " -ErrorAction SilentlyContinue);if($r.Count -eq 0){'no_rules'}else{'rules_exist'}")
+        if result.splitlines()[-1:] == ['no_rules']:
+            return
+        raise PermissionError('请通过启动器授予管理员权限，以清理旧版本的断网规则。')
+    powershell("$ErrorActionPreference='Stop';Get-NetFirewallRule -Name " + quote(PREFIX+'.*') + " -ErrorAction SilentlyContinue|Remove-NetFirewallRule;exit 0;")
 
 def cache_ready():
     try:
@@ -87,8 +88,6 @@ SYNC = {'status': 'idle', 'done': 0, 'total': 0, 'checked_at': 0}
 def start_sync(force=False):
     global READY
     with LOCK:
-        if ACTUAL_OFFLINE:
-            raise RuntimeError('本地全图鉴开启时禁止联网同步。请先关闭开关。')
         if SYNC['status'] == 'running':
             return dict(SYNC)
         if not force and time.time() - SYNC['checked_at'] < 900:
@@ -112,6 +111,16 @@ def start_sync(force=False):
     return dict(SYNC)
 
 class Handler(BaseHTTPRequestHandler):
+    def cached_asset(self, name):
+        candidates=[ROOT/'cache/assets'/name]
+        for previous in sorted(ROOT.glob('cache_previous_*'),reverse=True)[:2]:
+            if previous.is_dir() and previous.resolve().is_relative_to(ROOT):
+                candidates.append(previous/'assets'/name)
+        for candidate in candidates:
+            if candidate.is_file() and candidate.resolve().is_relative_to(ROOT):
+                return candidate
+        return None
+
     def log_message(self, *args):
         pass
 
@@ -147,7 +156,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(200, {'token':TOKEN})
         if path == '/status':
             return self.respond(200, {'ready': READY, 'enabled': ACTUAL_OFFLINE,
-                                      'firewall_verified': ACTUAL_OFFLINE,
+                                      'mod_version': CONFIG.get('mod_version'), 'client_version': CONFIG.get('client_version'),
+                                      'firewall_verified': False, 'mode_verified': True, 'network_policy': 'rooms-only',
                                       'asset_count': CONFIG['asset_count'], 'atlas_count': CONFIG['atlas_count'], 'sync': dict(SYNC)})
         if path == '/sync/status':
             return self.respond(200, dict(SYNC))
@@ -161,15 +171,15 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith(('/character/', '/accessory/', '/emote/', '/emote_atlas/', '/character_skin_atlas/', '/accessory_atlas/')):
             name = path.rsplit('/', 1)[-1]
             if re.fullmatch(r'[0-9a-f]{64}\.png', name):
-                cached = ROOT / 'cache/assets' / name
-                if cached.is_file():
+                cached = self.cached_asset(name)
+                if cached:
                     return self.respond(200, cached.read_bytes(), 'image/png')
         if path.startswith('/assets/'):
             name = path.removeprefix('/assets/')
             if '/' in name or '\\' in name or '..' in name:
                 return self.respond(400, {'error': 'Invalid path'})
-            p = ROOT / 'cache/assets' / name
-            if p.is_file():
+            p = self.cached_asset(name)
+            if p:
                 return self.respond(200, p.read_bytes(), mimetypes.guess_type(p.name)[0] or 'application/octet-stream')
             with LOCK, (ROOT / 'client_diagnostics.jsonl').open('a', encoding='utf-8') as stream:
                 stream.write(json.dumps({'kind': 'asset_not_found', 'path': path}) + '\n')
@@ -181,6 +191,42 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(403, {'error':'App origin required'})
         if self.headers.get('X-Local-Token') != TOKEN:
             return self.respond(403, {'error': 'Invalid local control token'})
+        path = urlparse(self.path).path
+        if path.startswith('/update/'):
+            try:
+                action = path.rsplit('/', 1)[-1]
+                if action == 'check':
+                    result = UPDATER.check()
+                    ASSISTANT.update_required = result.get('required') is True
+                    return self.respond(200, result)
+                if action == 'status':
+                    return self.respond(200, UPDATER.status())
+                if action == 'healthy':
+                    body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))) or b'{}')
+                    return self.respond(200, UPDATER.healthy(body.get('version')))
+                if action == 'install':
+                    result = UPDATER.prepare()
+                    ASSISTANT.handle('quit', {}, ACTUAL_OFFLINE)
+                    self.respond(200, result)
+                    def stop_for_update():
+                        ASSISTANT.save(True)
+                        self.server.shutdown()
+                    threading.Timer(8, stop_for_update).start()
+                    return
+                return self.respond(404, {'error':'Unknown update action'})
+            except Exception as error:
+                return self.respond(409, {'error':str(error)})
+        if path.startswith('/assistant/'):
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 <= length <= 16384:
+                    raise ValueError('Request too large')
+                body = json.loads(self.rfile.read(length) or b'{}')
+                if not isinstance(body, dict):
+                    raise ValueError('Object required')
+                return self.respond(200, ASSISTANT.handle(path.rsplit('/', 1)[-1], body, ACTUAL_OFFLINE))
+            except Exception as error:
+                return self.respond(400, {'error': str(error)})
         if urlparse(self.path).path == '/sync':
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))) or b'{}')
@@ -209,16 +255,14 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(enabled, bool):
                 raise ValueError('enabled must be boolean')
             with LOCK:
-                if enabled and SYNC['status'] == 'running':
-                    raise RuntimeError('正在同步新图鉴，请同步完成后再开启离线全图鉴。')
                 if enabled and not READY:
                     raise RuntimeError('离线素材缓存不完整，未开启。')
-                set_firewall(enabled)
+                set_firewall(False)
                 ACTUAL_OFFLINE = enabled
                 tmp = STATE.with_suffix('.tmp')
                 tmp.write_text(json.dumps({'enabled': enabled}), encoding='utf-8')
                 tmp.replace(STATE)
-            return self.respond(200, {'enabled': enabled, 'firewall_verified': enabled, 'ready': READY})
+            return self.respond(200, {'enabled': enabled, 'firewall_verified': False, 'mode_verified': True, 'network_policy': 'rooms-only', 'ready': READY})
         except Exception as error:
             return self.respond(409, {'error': str(error)})
 
@@ -234,13 +278,15 @@ def main():
     if desired_offline():
         if not READY:
             raise RuntimeError('Offline mode is saved but cache is incomplete; refusing to launch host.')
-        set_firewall(True)
+        set_firewall(False)
         ACTUAL_OFFLINE = True
     else:
         set_firewall(False)
     server = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
     print(json.dumps({'ready': READY, 'enabled': ACTUAL_OFFLINE, 'port': PORT}), flush=True)
     server.serve_forever()
+    server.server_close()
+    ASSISTANT.save(True)
 
 if __name__ == '__main__':
     main()

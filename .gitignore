@@ -8,6 +8,9 @@ __pycache__/
 node_modules/
 local_config.json
 offline_state.json
+assistant_state.json
+update_policy.json
+.updates/
 profile/
 cache/
 cache_*/

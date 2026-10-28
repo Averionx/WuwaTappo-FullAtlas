@@ -1,15 +1,17 @@
 // This factory is shared by every WebView and exercised independently in tests.
 function createLocalAtlasController(d) {
   const KEY = 'wuwatappo-local-gallery-v1';
+  const CACHE_KEY='wuwatappo-local-cache-generation';
   const enabled = d.ref(false), busy = d.ref(false), selection = d.ref({}), favorites = d.ref({});
   const offlineData = d.ref(null), revision = d.ref(0);
   const syncStatus = d.ref({status: 'idle', done: 0, total: 0});
   let originalCatalog = null, pending = Promise.resolve();
+  let statusTimer=null, disposed=false;
   let offlinePolicyInstalled = false;
   const sockets = new Set(), xhrs = new Set(), fetches = new Set();
   const rawFetch = d.window.fetch.bind(d.window);
   const origin = d.origin;
-  const offlineError = () => new Error('本地全图鉴已开启：当前为离线模式，无法连接服务器或进入联机。');
+  const offlineError = () => new Error('本地全图鉴已开启：不能进入联机或把本地图鉴外观写入账号。真实点击和开箱正常。');
   const read = () => { try { return JSON.parse(d.storage.getItem(KEY) || '{}'); } catch { return {}; } };
   const remote = value => {
     try {
@@ -17,6 +19,16 @@ function createLocalAtlasController(d) {
       return !(['data:', 'blob:', 'tauri:', 'asset:'].includes(u.protocol) || u.origin === origin || u.origin === d.window.location.origin);
     } catch { return true; }
   };
+  function restricted(value, method='GET', socket=false) {
+    try {
+      const input=typeof value==='string'||value instanceof URL?String(value):value.url;
+      const url=new URL(input,d.window.location.href), path=decodeURIComponent(url.pathname).replace(/^\/+/, '');
+      if (/^api\/frontend\/rooms(?:\/|$)/i.test(path) || /(?:^|\/)socket\.io(?:\/|$)/i.test(path))return true;
+      if(socket && /^(?:ws|wss):$/.test(url.protocol) && url.hostname==='api-mc-wuwatappo.kurogames-global.com')return true;
+      if(String(method).toUpperCase()==='GET'||String(method).toUpperCase()==='HEAD')return false;
+      return /^api\/frontend\/(?:assets\/(?:synthesis|favorites)|user\/me\/appearance|presets)(?:\/|$)/i.test(path);
+    }catch{return false;}
+  }
   const save = () => {
     d.storage.setItem(KEY, JSON.stringify({enabled: enabled.value, selection: selection.value, favorites: favorites.value}));
     revision.value++;
@@ -27,7 +39,7 @@ function createLocalAtlasController(d) {
     if (!bootstrapPromise) bootstrapPromise=rawFetch(origin+'/bootstrap').then(async response=>{
       if(!response.ok)throw new Error('本地服务身份验证失败');
       d.token=(await response.json()).token;
-    });
+    }).catch(error=>{bootstrapPromise=null;throw error;});
     await bootstrapPromise;
   }
   async function localRequest(path, body) {
@@ -44,7 +56,7 @@ function createLocalAtlasController(d) {
     for (const xhr of xhrs) { try { xhr.abort(); } catch {} }
     for (const controller of fetches) controller.abort();
     sockets.clear(); xhrs.clear(); fetches.clear();
-    d.window.dispatchEvent(new d.window.CustomEvent('wuwatappo-offline-mode', {detail: true}));
+    d.window.dispatchEvent(new d.window.CustomEvent('wuwatappo-local-mode', {detail: true}));
   }
   function reportDiagnostic(kind, detail) {
     if (!enabled.value) return;
@@ -52,19 +64,13 @@ function createLocalAtlasController(d) {
       body: JSON.stringify({kind, detail, origin: d.window.location.origin, time: Date.now()})}).catch(() => {});
   }
   function installOfflinePolicy() {
-    if (!d.window.document || offlinePolicyInstalled) return;
-    const meta = d.window.document.createElement('meta');
-    meta.httpEquiv = 'Content-Security-Policy';
-    // Browser resource loads must also stay local, including when the system
-    // normally routes HTTP through a loopback proxy.
-    meta.content = `default-src 'self' data: blob: ${origin}; connect-src 'self' ${origin}; img-src 'self' data: blob: ${origin}; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; media-src 'self' data: blob: ${origin}; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'self'`;
-    meta.dataset.localGalleryOffline = 'true';
-    d.window.document.head.appendChild(meta);
+    // A local view no longer installs a blanket network CSP. This flag only
+    // requests a clean ordinary-account view when the mode is turned off.
     offlinePolicyInstalled = true;
   }
   function installNetworkGuards() {
     d.window.fetch = async (input, options = {}) => {
-      const isRemote = remote(input);
+      const isRemote = restricted(input,options.method||input?.method||'GET');
       if (enabled.value && isRemote) throw offlineError();
       const controller = new AbortController();
       if (options.signal?.aborted) controller.abort();
@@ -77,7 +83,7 @@ function createLocalAtlasController(d) {
     const XHR = d.window.XMLHttpRequest;
     if (XHR) {
       const open = XHR.prototype.open, send = XHR.prototype.send;
-      XHR.prototype.open = function(method, url, ...rest) { this.__localRemote = remote(url); return open.call(this, method, url, ...rest); };
+      XHR.prototype.open = function(method, url, ...rest) { this.__localRemote = restricted(url,method); return open.call(this, method, url, ...rest); };
       XHR.prototype.send = function(...args) {
         if (enabled.value && this.__localRemote) throw offlineError();
         if (this.__localRemote) { xhrs.add(this); this.addEventListener('loadend', () => xhrs.delete(this), {once: true}); }
@@ -88,9 +94,10 @@ function createLocalAtlasController(d) {
       const Original = d.window[name];
       if (!Original) continue;
       const Wrapped = function(url, ...args) {
-        if (enabled.value && remote(url)) throw offlineError();
+        const blocked=restricted(url,'GET',name==='WebSocket');
+        if (enabled.value && blocked) throw offlineError();
         const instance = new Original(url, ...args);
-        if (remote(url)) { sockets.add(instance); instance.addEventListener?.('close', () => sockets.delete(instance), {once: true}); }
+        if (blocked) { sockets.add(instance); instance.addEventListener?.('close', () => sockets.delete(instance), {once: true}); }
         return instance;
       };
       Object.setPrototypeOf(Wrapped, Original); Wrapped.prototype = Original.prototype;
@@ -98,14 +105,23 @@ function createLocalAtlasController(d) {
     }
     if (d.window.navigator?.sendBeacon) {
       const send = d.window.navigator.sendBeacon.bind(d.window.navigator);
-      d.window.navigator.sendBeacon = (url, data) => enabled.value && remote(url) ? false : send(url, data);
+      d.window.navigator.sendBeacon = (url, data) => enabled.value && restricted(url,'POST') ? false : send(url, data);
     }
   }
   // Tauri defines its injected invoke property as non-writable. The app's two
   // existing invoke wrapper functions call this guard instead of replacing it.
   function checkInvoke(command, args) {
-    if (enabled.value && (/^plugin:(http|updater)\|/.test(command) ||
-        /^plugin:opener\|open_url$/.test(command) && remote(args?.url))) throw offlineError();
+    if(!enabled.value)return;
+    if(!/^plugin:(?:http|websocket)\|/.test(command))return;
+    const addresses=[],seen=new WeakSet();let method='GET';
+    function visit(value) {
+      if(typeof value==='string'){if(/^(?:https?:|wss?:|\/?api\/)/i.test(value))addresses.push(value);return;}
+      if(!value||typeof value!=='object'||seen.has(value))return;
+      seen.add(value);
+      for(const [key,item]of Object.entries(value)){if(key==='method'&&typeof item==='string')method=item;else visit(item);}
+    }
+    visit(args);
+    if(addresses.some(url=>restricted(url,method,/^plugin:websocket\|/.test(command))))throw offlineError();
   }
   async function prepare(refresh = false) {
     if (!offlineData.value || refresh) {
@@ -120,16 +136,14 @@ function createLocalAtlasController(d) {
       enabled.value = true;
       installOfflinePolicy();
       stopConnections();
+      if(d.catalogConsumer===false){revision.value++;return;}
       const data = await prepare();
       if (!originalCatalog) originalCatalog = d.snapshotCatalog();
       d.applyOfflineCatalog(data.catalog, origin);
     } else {
       enabled.value = false;
       if (originalCatalog) { d.restoreCatalog(originalCatalog); originalCatalog = null; }
-      // Browsers retain a CSP until navigation, even if its meta tag is removed.
-      if (offlinePolicyInstalled && d.reloadOnDisable !== false) {
-        d.window.setTimeout(() => d.window.location.reload(), 100);
-      }
+      // Restore reactively; reloading would discard a running background driver.
     }
     revision.value++;
   }
@@ -137,9 +151,10 @@ function createLocalAtlasController(d) {
     if (busy.value) return;
     busy.value = true;
     try {
+      await d.window.__WUWA_LOCAL_ATLAS__?.assistant?.flushBeforeSwitch(Boolean(on));
       if (on) await prepare(true);
       const response = await localRequest('/mode', {enabled: Boolean(on)});
-      if (on && (!response.enabled || !response.firewall_verified)) throw new Error('系统断网尚未生效，未开启本地图鉴');
+      if (on && (!response.enabled || !response.mode_verified || response.network_policy!=='rooms-only')) throw new Error('本地模式保护未就绪，未开启本地图鉴');
       await applyMode(Boolean(on));
       save();
     } finally { busy.value = false; }
@@ -203,13 +218,17 @@ function createLocalAtlasController(d) {
     selection.value = {...selection.value, emote: ids.map(id => byId.get(id))}; save();
   }
   async function syncCache(force = true) {
-    if (enabled.value) throw offlineError();
     syncStatus.value = await localRequest('/sync', {force});
     while (syncStatus.value.status === 'running') {
       await new Promise(resolve => d.window.setTimeout(resolve, 600));
       syncStatus.value = await localRequest('/sync/status');
     }
     if (syncStatus.value.status === 'failed') throw new Error(syncStatus.value.error || '图鉴同步失败，原缓存保留');
+    if(enabled.value){const data=await prepare(true);d.applyOfflineCatalog(data.catalog,origin);revision.value++;}
+    if(syncStatus.value.result?.changed){
+      const generation=String(syncStatus.value.result.assets_json_ts||syncStatus.value.checked_at);
+      if(d.storage.getItem(CACHE_KEY)!==generation)d.storage.setItem(CACHE_KEY,generation);
+    }
     return syncStatus.value;
   }
   const initial = read();
@@ -223,6 +242,12 @@ function createLocalAtlasController(d) {
     if (event.target?.tagName === 'IMG') reportDiagnostic('image_error', {src: String(event.target.currentSrc || event.target.src).slice(0, 600)});
   }, true);
   d.window.addEventListener('storage', event => {
+    if(disposed)return;
+    if(event.key===CACHE_KEY){
+      if(enabled.value&&d.catalogConsumer!==false)prepare(true).then(data=>{d.applyOfflineCatalog(data.catalog,origin);revision.value++;}).catch(d.onError);
+      else offlineData.value=null;
+      return;
+    }
     if (event.key !== KEY) return;
     const state = read();
     selection.value = state.selection || {}; favorites.value = state.favorites || {};
@@ -230,27 +255,37 @@ function createLocalAtlasController(d) {
     pending = pending.catch(() => {}).then(() => applyMode(state.enabled === true)).catch(d.onError);
     revision.value++;
   });
-  const ready = localRequest('/status').then(async status => {
+  async function waitForHost() {
+    let last;
+    for(let attempt=0;attempt<40;attempt++) {
+      try{return await localRequest('/status');}catch(error){last=error;}
+      await new Promise(resolve=>d.window.setTimeout(resolve,500));
+    }
+    throw last;
+  }
+  const ready = waitForHost().then(async status => {
     if (!status.ready) throw new Error('离线资源未就绪，请使用本地版启动器');
-    await applyMode(status.enabled === true && status.firewall_verified === true);
+    await applyMode(status.enabled === true && status.mode_verified === true && status.network_policy==='rooms-only');
     syncStatus.value = status.sync || syncStatus.value;
     save();
-    if (!enabled.value && d.window.setTimeout) d.window.setTimeout(() => { if (!enabled.value) syncCache(false).catch(() => {}); }, 2000);
+    if (d.catalogConsumer!==false&&d.window.setTimeout) d.window.setTimeout(() => syncCache(false).catch(() => {}), 2000);
   });
   if (d.window.setInterval) {
     let checkingStatus = false;
-    d.window.setInterval(async () => {
+    statusTimer=d.window.setInterval(async () => {
       if (checkingStatus || busy.value) return;
       checkingStatus = true;
       try {
         const status = await localRequest('/status');
         if (status.sync) syncStatus.value = status.sync;
-        const on = status.enabled === true && status.firewall_verified === true;
+        const on = status.enabled === true && status.mode_verified === true && status.network_policy==='rooms-only';
         if (on !== enabled.value) { await applyMode(on); save(); }
       } catch {}
       finally { checkingStatus = false; }
-    }, 1500);
+    }, d.catalogConsumer===false?15000:1500);
   }
+  function dispose(){disposed=true;if(statusTimer!==null)d.window.clearInterval?.(statusTimer);}
   return {enabled, busy, selection, favorites, revision, ready, setEnabled, inventory, viewUser, select,
-    favorite, reorder, prepare, offlineData, assetsHost: origin, offlineError, checkInvoke, syncStatus, syncCache};
+    favorite, reorder, prepare, offlineData, assetsHost: origin, offlineError, checkInvoke, syncStatus, syncCache, request: localRequest, dispose,
+    restricted,normalCumulative:()=>d.getAccountCumulative?.()??0,normalPending:()=>d.getAccountPending?.()??0};
 }

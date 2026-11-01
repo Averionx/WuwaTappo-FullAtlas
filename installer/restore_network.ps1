@@ -19,6 +19,13 @@ try{
   if($taskRestore.ExitCode -ne 0){throw '移除本地版防火墙规则失败'}
  }
  if($Cleanup){
+  # Remove only this variant installation's logon entry before uninstalling.
+  if($taskListener){
+   Invoke-RestMethod -Uri ('http://127.0.0.1:'+$taskConfig.port+'/startup') -Method Post -Headers @{'X-Local-Token'=$taskConfig.token} -ContentType 'application/json' -Body '{"action":"disable"}' -TimeoutSec 60|Out-Null
+  }else{
+   $taskDisable=Start-Process -FilePath (Join-Path $PSScriptRoot 'LocalGalleryHost.exe') -WindowStyle Hidden -Wait -PassThru -ArgumentList '--startup-disable'
+   if($taskDisable.ExitCode -ne 0){throw '移除全图鉴版开机自启动失败'}
+  }
   $taskExact=@((Join-Path $PSScriptRoot 'WuwaTappo.Local.exe'),(Join-Path $PSScriptRoot 'LocalGalleryHost.exe'))
   $taskRuntime=Join-Path $PSScriptRoot 'runtime\'
   Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -and ($taskExact -contains $_.ExecutablePath -or $_.ExecutablePath.StartsWith($taskRuntime,[StringComparison]::OrdinalIgnoreCase))}|ForEach-Object{Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue}

@@ -157,6 +157,7 @@ class Updater:
         self.github_version = ''
         self.github_checked = False
         self.github_error = None
+        self.preview_until = 0
         if self.policy_file.exists():
             try:
                 saved = json.loads(self.policy_file.read_text(encoding='utf-8'))
@@ -318,7 +319,7 @@ class Updater:
             self.lock.release()
 
     def status(self):
-        common={'required':False,'repository':REPO,'checked_at':self.checked_at,'error':self.last_error,
+        common={'required':False,'preview':time.monotonic()<self.preview_until,'repository':REPO,'checked_at':self.checked_at,'error':self.last_error,
                 'official_version':self.official_version,'client_version':self.config.get('client_version',''),
                 'current_version':self.config['mod_version'],'official_checked':self.official_checked,
                 'official_error':self.official_error,'waiting_for_adapter':self.waiting_for_adapter}
@@ -339,7 +340,7 @@ class Updater:
         elif self.waiting_for_adapter:
             mod_state,mod_message='waiting','暂未找到适配官方 v'+self.official_version+' 的可用修改版升级包，请等待作者更新。'
         elif self.available:
-            mod_state,mod_message='available','发现修改版 v'+self.available['version']+'，可更新。点击“一键升级”保留账号、缓存和设置。'
+            mod_state,mod_message='available','发现修改版 v'+self.available['version']+'，请更新后继续使用。升级保留账号、缓存和设置。'
         elif not self.github_checked:
             mod_state,mod_message='unchecked','尚未检查修改版最新版本。'
         elif version_tuple(self.github_version)==version_tuple(self.config['mod_version']):
@@ -351,7 +352,7 @@ class Updater:
         common.update(official_state=official_state,official_message=official_message,
                       mod_state=mod_state,mod_message=mod_message)
         available=bool(self.available) and not self.waiting_for_adapter
-        result={**common,'available':available,'message':official_message+' '+mod_message}
+        result={**common,'available':available,'required':available,'message':official_message+' '+mod_message}
         if available:result['version']=self.available['version']
         return result
 

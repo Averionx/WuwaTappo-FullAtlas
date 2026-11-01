@@ -2,15 +2,15 @@
 [Setup]
 AppId={{B0A64B37-C7C3-4E2F-925B-A4EBB90E92B2}
 AppName={#AppTitle}
-AppVersion=1.3.4
-AppVerName={#AppTitle} 1.3.4
+AppVersion=1.3.5
+AppVerName={#AppTitle} 1.3.5
 AppPublisher=Averionx
 AppPublisherURL=https://github.com/Averionx/WuwaTappo-FullAtlas
 AppSupportURL=https://github.com/Averionx/WuwaTappo-FullAtlas/issues
 DefaultDirName={autopf}\WuwaTappoFullAtlas
 DefaultGroupName={#AppTitle}
 OutputDir=..\dist
-OutputBaseFilename=WuwaTappo全图鉴版-1.3.4-Setup
+OutputBaseFilename=WuwaTappo全图鉴版-1.3.5-Setup
 Compression=lzma2/normal
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
@@ -19,7 +19,7 @@ PrivilegesRequired=admin
 WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
-UninstallDisplayName={#AppTitle} 1.3.4
+UninstallDisplayName={#AppTitle} 1.3.5
 InfoBeforeFile=..\docs\INSTALL_NOTES.txt
 SetupLogging=yes
 

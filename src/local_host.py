@@ -8,10 +8,15 @@ from sync_cache import sync as sync_public_cache
 from desktop_assistant import Assistant, PhysicalInput
 from desktop_updater import Updater, apply_update
 from process_lifecycle import watch_native_exit
+from startup_manager import StartupManager
 
 if '--apply-update' in sys.argv:
     pos = sys.argv.index('--apply-update')
     apply_update(sys.argv[pos+1], sys.argv[pos+2])
+    sys.exit(0)
+if '--startup-disable' in sys.argv:
+    root=Path(sys.executable if getattr(sys,'frozen',False) else __file__).resolve().parent
+    print(json.dumps(StartupManager(root).run('disable')),flush=True)
     sys.exit(0)
 if '--self-check' in sys.argv:
     import ssl
@@ -26,6 +31,7 @@ PORT = CONFIG['port']
 TOKEN = CONFIG['token']
 ASSISTANT = Assistant(ROOT, physical=PhysicalInput())
 UPDATER = Updater(ROOT, CONFIG)
+STARTUP = StartupManager(ROOT)
 
 def monitor_releases():
     while True:
@@ -193,6 +199,15 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('X-Local-Token') != TOKEN:
             return self.respond(403, {'error': 'Invalid local control token'})
         path = urlparse(self.path).path
+        if path == '/startup':
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 <= length <= 1024:raise ValueError('Request too large')
+                body = json.loads(self.rfile.read(length) or b'{}')
+                action = body.get('action', 'status')
+                return self.respond(200, STARTUP.run(action))
+            except Exception as error:
+                return self.respond(409, {'error': str(error)})
         if path.startswith('/update/'):
             try:
                 action = path.rsplit('/', 1)[-1]
@@ -201,6 +216,9 @@ class Handler(BaseHTTPRequestHandler):
                     ASSISTANT.update_required = result.get('required') is True
                     return self.respond(200, result)
                 if action == 'status':
+                    return self.respond(200, UPDATER.status())
+                if action in ('preview', 'preview-close'):
+                    UPDATER.preview_until = time.monotonic()+300 if action=='preview' else 0
                     return self.respond(200, UPDATER.status())
                 if action == 'healthy':
                     body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))) or b'{}')
@@ -276,6 +294,10 @@ def main():
         set_firewall(False)
         STATE.write_text('{"enabled":false}', encoding='utf-8')
         return
+    try:
+        STARTUP.run('migrate')
+    except Exception as error:
+        print('Startup migration: '+str(error), file=sys.stderr, flush=True)
     if desired_offline():
         if not READY:
             raise RuntimeError('Offline mode is saved but cache is incomplete; refusing to launch host.')

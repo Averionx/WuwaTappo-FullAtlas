@@ -8,7 +8,7 @@ SUPPORTED_BASES={
     '099b62be14efe2cc99bb0ad3d37860488c42fb0f4e6282b5687e6335ab178573':'1.0.2',
     'cedc37d0c11d112f4d933647fb6cf00e1dca847fc763250984c647080f849080':'1.0.3',
 }
-MOD_VERSION='1.3.4'
+MOD_VERSION='1.3.5'
 
 def copy_if_changed(source, destination):
     source, destination = Path(source), Path(destination)

@@ -99,7 +99,9 @@ onError: error => console.error('[local-gallery]', error)
 window.__WUWA_LOCAL_ATLAS__ = localAtlasController;
 localAtlasController.ready.then(() => { localStartOnlineServices(); return bootstrap(); }).catch(error => {
  console.error('[local-gallery] startup failed', error);
- document.getElementById('app').textContent = '请通过本地版启动器运行。' + error.message;
+ const app=document.getElementById('app');
+ app.textContent='本地服务未能启动，请退出后使用“WuwaTappo全图鉴版”快捷方式或绿色版启动。';
+ app.style.cssText='margin:20px;padding:18px;border-radius:16px;background:#fff3db;color:#976238;font:15px/1.8 sans-serif;max-width:460px';
 });
 watch(localAtlasController.enabled, on => { if (!on) localStartOnlineServices(); });
 '''
@@ -362,7 +364,11 @@ panel = panel[:match.start()] + f'__lg.enabled.value ? __lg.favorite({match[3]}.
 from integrate_assistant import integrate
 assert config['client_version'] in ('1.0.2','1.0.3'), 'Desktop assistant requires a verified adapter'
 shared, main, panel = integrate(PROJECT, BASE, frontend, structure, shared, main, panel, main_name, panel_name)
-extra_patched_assets = [p.name for p in (BASE/'frontend/assets').glob('switchDisplayMonitor-*.js')
+# The original native update window supplies a compact separate surface. Its
+# official installer UI must never run alongside the variant's own updater.
+update_name=routes['/update']
+(frontend/'assets'/update_name).write_text('export default {name:"FullAtlasUpdateWindow",render:()=>null};\n',encoding='utf-8')
+extra_patched_assets = [p.name for p in (BASE/'frontend/assets').glob('*.js')
                         if (frontend/'assets'/p.name).read_bytes() != p.read_bytes()]
 for name, text in [(shared_name, shared), (main_name, main), (panel_name, panel)]:
     (frontend / 'assets' / name).write_text(text, encoding='utf-8')

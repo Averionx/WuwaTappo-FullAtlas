@@ -1,6 +1,6 @@
 /* Main-renderer driver. No signal enters the Windows input queue. */
-function createDesktopAssistant({ref, window, atlas, displayName=(type,name)=>name}) {
-  const VERSION='1.3.4', updateRequired=ref(false);
+function createDesktopAssistant({ref, window, atlas, nativeWindow=null, displayName=(type,name)=>name}) {
+  const VERSION='1.3.5', updateRequired=ref(false);
   const state=ref({settings:{enabled:false,speed:5,auto_chest:false,threshold:1000,remember_monitor:true}});
   const request=(action,body={})=>atlas.request('/assistant/'+action,body);
   const ready=atlas.ready.then(()=>request('state')).then(v=>{state.value=v;updateRequired.value=!!v.update_required;});
@@ -8,6 +8,7 @@ function createDesktopAssistant({ref, window, atlas, displayName=(type,name)=>na
   let dashboard=null,autoSide=null,autoUntil=0,flushing=null;
   let requestedTab='overview';
   let dashboardGeneration=0;
+  let updateGate=null,lastUpdateStatus=null,previewLatched=false;
   const readyButtons=new Map(),retryAfter=new Map();
   const physicalHeld=new Set();
   const emoteStats={physical:0,eligible:0,sent:0,reason:'waiting-input'};
@@ -100,10 +101,19 @@ function createDesktopAssistant({ref, window, atlas, displayName=(type,name)=>na
       button.click();break;
     }
   }
-  function applyUpdateStatus(result){
-    // Updates are opt-in. Never turn a version check or a saved legacy policy
-    // into an application lock; installation is initiated in the console.
-    updateRequired.value=false;
+  async function applyUpdateStatus(result){
+    const updateWindow=(window.location?.hash||'').startsWith('#/update');
+    if(updateWindow&&(result.preview||previewLatched)){previewLatched=true;result={...result,preview:true};}
+    updateRequired.value=result.required===true;
+    lastUpdateStatus=result;
+    const show=result.required===true||result.preview===true;
+    if(updateWindow&&show){
+      if(updateGate)updateGate.update(result);
+      else updateGate=createAssistantUpdateGate({window,result,version:VERSION,nativeWindow,
+        install:()=>atlas.request('/update/install',{}),retry:()=>atlas.request('/update/check',{}),
+        quit:()=>request('quit'),reportWindow:details=>atlas.request('/diagnostic',{kind:'update_window_setup',...details})});
+    }else if(updateGate){updateGate.close();updateGate=null;}
+    if(started&&show)await mainDependencies.showUpdate?.(result);
   }
   async function startMain(d){
     if(started)return;started=true;mainDependencies=d;
@@ -115,7 +125,7 @@ function createDesktopAssistant({ref, window, atlas, displayName=(type,name)=>na
         const now=Date.now(),body={sent,confirmed};sent=confirmed=0;
         if(now-lastObserve>=1000){Object.assign(body,observation(d));lastObserve=now;await drainRewards();}
         const result=await request('tick',body);state.value={...state.value,...result};
-        if(result.update_required&&!updateRequired.value)applyUpdateStatus(await atlas.request('/update/status',{}));
+        if(result.update_required&&!updateRequired.value)await applyUpdateStatus(await atlas.request('/update/status',{}));
         if(result.flush_generation){await flush();await request('flush-ack',{generation:result.flush_generation});}
         if(result.quit){await flush();await d.quit();return;}
         if(typeof result.open_settings==='string')await d.openView?.(result.open_settings);
@@ -131,6 +141,7 @@ function createDesktopAssistant({ref, window, atlas, displayName=(type,name)=>na
       timer=window.setTimeout(loop,delay);
     }
     timer=window.setTimeout(loop,1000);
+    if(lastUpdateStatus)await applyUpdateStatus(lastUpdateStatus);
     const saved=state.value.monitor;
     if(state.value.settings.remember_monitor&&saved?.name){
       try{const monitors=await d.monitors();if(monitors.filter(m=>m.name===saved.name).length===1)await d.restoreMonitor(saved.name);}
@@ -178,10 +189,10 @@ function createDesktopAssistant({ref, window, atlas, displayName=(type,name)=>na
   }
   async function pollPolicy(){
     if(disposed)return;
-    try{const result=await atlas.request('/update/status',{});applyUpdateStatus(result);}catch{}
+    try{const result=await atlas.request('/update/status',{});await applyUpdateStatus(result);}catch{}
     if(!disposed)window.setTimeout(pollPolicy,15000);
   }
   ready.then(pollPolicy).catch(()=>{});
-  window.addEventListener('pagehide',()=>{disposed=true;closePanel();});
+  window.addEventListener('pagehide',()=>{disposed=true;closePanel();updateGate?.close();});
   return {ready,state,updateRequired,startMain,openPanel,mountConsole,closePanel,flush,flushBeforeSwitch,beginChest,chestSucceeded,physicalKey,physicalRelease,roomHistory,favoriteRoom,deleteRoom,joinHistoryRoom,openProject:()=>request('project')};
 }

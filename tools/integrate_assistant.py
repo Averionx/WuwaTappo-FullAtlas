@@ -59,7 +59,7 @@ def integrate(project, base, frontend, structure, shared, main, panel, main_name
     factory = (project / 'src/assistant_dashboard.js').read_text(encoding='utf-8')+'\n'+(project / 'src/desktop_assistant.js').read_text(encoding='utf-8')
     shared = once(shared, 'window.__WUWA_LOCAL_ATLAS__ = localAtlasController;', factory + '''
 window.__WUWA_LOCAL_ATLAS__ = localAtlasController;
-localAtlasController.assistant=createDesktopAssistant({ref,window,atlas:localAtlasController,displayName:resolveAssetDisplayName});''')
+localAtlasController.assistant=createDesktopAssistant({ref,window,atlas:localAtlasController,nativeWindow:()=>getCurrentWindow(),displayName:resolveAssetDisplayName});''')
     shared = once(shared, 'localAtlasController.ready.then(() => { localStartOnlineServices(); return bootstrap(); })',
                   'Promise.all([localAtlasController.ready,localAtlasController.assistant.ready]).then(() => { localStartOnlineServices(); return bootstrap(); })')
     # Record only the original successful server result, before its popup. The
@@ -76,6 +76,13 @@ localAtlasController.assistant=createDesktopAssistant({ref,window,atlas:localAtl
     quit_fn = re.search(r'"tray-quit", \(\) => \{\s*([\w$]+)\(\)', source)[1]
     persist_original = re.search(re.escape(mi['listenPersistClicksBeforeExit'])+r'\(async \(\) => \{\s*([\s\S]+?)\n\s*\}\)',source)[1]
     main = once(main, 'async function '+quit_fn+'() {', 'async function '+quit_fn+'() {\n try{await __lg.assistant.flush();}catch{}')
+    tab_source=next(fn for fn in structure['files'][main_name]['functions'] if fn['name']==open_tab)
+    tab_text=source[tab_source['start']:tab_source['end']]
+    lock_guard=re.search(r'if \(([\w$]+)\(\)\) \{',tab_text)
+    assert lock_guard,'panel update-lock guard'
+    main=once(main,tab_text[:tab_text.index('rt.value')],tab_text[:tab_text.index('rt.value')].replace(lock_guard[0], 'if (e !== "console" && '+lock_guard[1]+'()) {'))
+    panel_visible=re.search(r'([\w$]+)\.value = !0;',tab_text)[1]
+    close_panel=min((fn for fn in structure['files'][main_name]['functions'] if '[panel] close failed' in source[fn['start']:fn['end']]),key=lambda fn:fn['end']-fn['start'])['name']
     code = f'''
 {mi['onMounted']}(()=>{{window.setTimeout(()=>__lg.assistant.startMain({{
  total:()=>{store}.cumulativeClickCount,balance:()=>{store}.totalClickCount,
@@ -87,6 +94,12 @@ localAtlasController.assistant=createDesktopAssistant({ref,window,atlas:localAtl
  sendEmote:item=>{emote_fn['name']}(item),
  monitors:__assistantMonitors,restoreMonitor:__assistantRestoreMonitor,
  currentMonitor:{mi['currentMonitor']},toast:{mi['showToast']},
+ showUpdate:async result=>{{
+   if({panel_visible}.value)await {close_panel}();
+   let visible=false;
+   try{{visible=await {native_invoke}('plugin:window|is_visible',{{label:'update'}});}}catch{{}}
+   if(!visible)await {native_invoke}('open_update_window',{{detail:{{currentVersion:result.current_version,newVersion:result.version||result.current_version,notes:'WuwaTappo全图鉴版更新',requiresManualDownload:false}}}});
+ }},
  openSettings:{open_settings},
  openView:async view=>{{
    if(__lg.assistant.updateRequired.value)return;
@@ -108,6 +121,9 @@ localAtlasController.assistant=createDesktopAssistant({ref,window,atlas:localAtl
     monitor = (base/'readable_js/assets'/monitor_name).read_text(encoding='utf-8')
     tab_guard='return e === "bag" || e === "atlas" || e === "exchange" || e === "room" || e === "setting"'
     monitor=once(monitor,tab_guard,tab_guard+' || e === "console"')
+    monitor=once(monitor,'return Fe() ? await u("is_elevated_autostart_enabled") : await X()',
+                 'return (await window.__WUWA_LOCAL_ATLAS__.request("/startup",{action:"status"})).enabled')
+    monitor=once(monitor,'async function _n(e) {','async function _n(e) {\n return window.__WUWA_LOCAL_ATLAS__.request("/startup",{action:e?"enable":"disable"});')
     switch_match=re.search(r'const ([\w$]+) = \(([\w$]+) \+ 1\) % ([\w$]+)\.length,',monitor)
     assert switch_match,'monitor cycle contract'
     idx,old_idx,monitors=switch_match.groups()

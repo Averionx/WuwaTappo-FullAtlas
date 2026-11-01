@@ -70,14 +70,14 @@ class UpdaterTests(unittest.TestCase):
         sums=('a'*64+'  WuwaTappo-FullAtlas-1.2-x64-update.zip\n').encode()
         with patch.object(updater,'fetch',side_effect=[json.dumps(release).encode(),sums]):
             return updater.check()
-    def test_formal_release_is_optional_cached_and_survives_outage(self):
+    def test_formal_release_is_mandatory_cached_and_survives_outage(self):
         updater=Updater(self.root,{'mod_version':'1.1'})
-        self.assertFalse(self.check_release(updater,self.release())['required'])
+        self.assertTrue(self.check_release(updater,self.release())['required'])
         self.assertTrue(updater.status()['available'])
         other=Updater(self.root,{'mod_version':'1.1'})
-        self.assertFalse(other.status()['required'])
+        self.assertTrue(other.status()['required'])
         with patch.object(other,'fetch',side_effect=OSError('offline')),patch.object(other,'public_release',side_effect=OSError('offline')):
-            self.assertFalse(other.check()['required'])
+            self.assertTrue(other.check()['required'])
         self.assertFalse(Updater(self.root,{'mod_version':'1.2'}).status()['required'])
     def test_draft_prerelease_incomplete_do_not_lock(self):
         for release in [self.release(draft=True),self.release(prerelease=True),self.release(complete=False)]:
@@ -118,7 +118,7 @@ class UpdaterTests(unittest.TestCase):
                 self.assertEqual(result['available'],available)
                 self.assertEqual(result['github_version'],'1.2')
                 self.assertIn(official,result['official_message'])
-                self.assertFalse(result['required'])
+                self.assertEqual(result['required'],available)
                 if mod_state=='current':self.assertIn('版本一致',result['mod_message'])
                 if mod_state=='waiting':self.assertIn('请等待',result['mod_message'])
                 self.assertEqual(updater.status()['message'],result['message'])
@@ -143,30 +143,37 @@ class UpdaterTests(unittest.TestCase):
         release=self.release();release['body']='适配官方 **1.0.3**。'
         result=self.check_release(updater,release)
         self.assertTrue(result['waiting_for_adapter']);self.assertFalse(result['available']);self.assertFalse(result['required'])
-    def test_matching_official_adapter_is_optional(self):
+    def test_matching_official_adapter_requires_update(self):
         updater=Updater(self.root,{'mod_version':'1.1','client_version':'1.0.2'})
         updater.official_version='1.0.4';updater.official_checked=True
         release=self.release();release['body']='适配官方 **1.0.4**。'
         result=self.check_release(updater,release)
-        self.assertTrue(result['available']);self.assertFalse(result['required']);self.assertFalse(result['waiting_for_adapter'])
+        self.assertTrue(result['available']);self.assertTrue(result['required']);self.assertFalse(result['waiting_for_adapter'])
         self.assertEqual(updater.available['client_version'],'1.0.4')
     def test_unknown_adapter_base_never_claims_new_official_support(self):
         updater=Updater(self.root,{'mod_version':'1.1','client_version':'1.0.2'})
         updater.official_version='1.0.4'
         result=self.check_release(updater,self.release())
         self.assertTrue(result['waiting_for_adapter']);self.assertFalse(result['available'])
-    def test_legacy_required_flag_does_not_lock(self):
+    def test_legacy_flag_does_not_override_validated_release(self):
         updater=Updater(self.root,{'mod_version':'1.1'})
         self.check_release(updater,self.release())
         data=json.loads(updater.policy_file.read_text());data['required']=True;updater.policy_file.write_text(json.dumps(data))
-        self.assertFalse(Updater(self.root,{'mod_version':'1.1'}).status()['required'])
+        self.assertTrue(Updater(self.root,{'mod_version':'1.1'}).status()['required'])
+    def test_flag_without_release_and_preview_never_lock(self):
+        (self.root/'update_policy.json').write_text('{"required":true,"release":null}')
+        updater=Updater(self.root,{'mod_version':'1.2'})
+        self.assertFalse(updater.status()['required'])
+        updater.preview_until=__import__('time').monotonic()+300
+        self.assertTrue(updater.status()['preview'])
+        self.assertFalse(updater.status()['required'])
     def test_invalid_later_release_cannot_clear_confirmed_requirement(self):
         updater=Updater(self.root,{'mod_version':'1.1'})
         self.check_release(updater,self.release())
         bad=self.release()
         bad['assets'][0]['browser_download_url']=bad['assets'][0]['browser_download_url'].replace('/v1.2/','/v9.9/')
         result=self.check_release(updater,bad)
-        self.assertFalse(result['required'])
+        self.assertTrue(result['required'])
         self.assertEqual(result['version'],'1.2')
     def helper_fixture(self):
         target=self.root/'install';target.mkdir()

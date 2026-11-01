@@ -2,6 +2,9 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const acorn=require('../tools/acorn.cjs'),build=path.resolve(__dirname,'../build');
 const manifest=JSON.parse(fs.readFileSync(path.join(build,'build_manifest_v2.json'),'utf8'));
+if(manifest.version==='1.0.3'){
+ require('./test_patched_contracts_103.cjs');
+}else{
 const main=fs.readFileSync(path.join(build,'frontend_v2/assets',manifest.main),'utf8');
 const shared=fs.readFileSync(path.join(build,'frontend_v2/assets',manifest.shared),'utf8');
 function walk(n,visit){if(!n||typeof n!=='object')return;if(n.type)visit(n);for(const [k,v] of Object.entries(n)){if(k==='start'||k==='end')continue;if(Array.isArray(v))v.forEach(x=>walk(x,visit));else if(v?.type)walk(v,visit);}}
@@ -68,3 +71,4 @@ vm.runInContext(shared.slice(invoke.start,invoke.end),context);
  assert(!main.includes('assistant.localChest'));assert(!main.includes('releasePanel'));assert(!shared.includes('incrementLocal()'));
  console.log('actual 1.0.2 contracts passed: original counters/save/logout, paired animation signals, room guards, real server chest/spend/reward path in BOTH modes');
 })().catch(error=>{console.error(error);process.exitCode=1;});
+}

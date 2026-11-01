@@ -1,12 +1,47 @@
 /* Main-renderer driver. No signal enters the Windows input queue. */
 function createDesktopAssistant({ref, window, atlas, displayName=(type,name)=>name}) {
-  const VERSION='1.2', updateRequired=ref(false);
+  const VERSION='1.3.4', updateRequired=ref(false);
   const state=ref({settings:{enabled:false,speed:5,auto_chest:false,threshold:1000,remember_monitor:true}});
   const request=(action,body={})=>atlas.request('/assistant/'+action,body);
   const ready=atlas.ready.then(()=>request('state')).then(v=>{state.value=v;updateRequired.value=!!v.update_required;});
   let started=false,disposed=false,timer=null,mainDependencies=null,sent=0,confirmed=0,lastObserve=0;
-  let dashboard=null,updateDialog=null,autoSide=null,autoUntil=0,flushing=null;
+  let dashboard=null,autoSide=null,autoUntil=0,flushing=null;
+  let requestedTab='overview';
+  let dashboardGeneration=0;
   const readyButtons=new Map(),retryAfter=new Map();
+  const physicalHeld=new Set();
+  const emoteStats={physical:0,eligible:0,sent:0,reason:'waiting-input'};
+  let emoteBusy=false,nextEmoteAt=0,typedKeys=0,lastTypedAt=0;
+  function physicalRelease(key){physicalHeld.delete(String(key));}
+  async function physicalKey(raw){
+    const key=String(raw),now=Date.now();
+    if(physicalHeld.has(key))return;
+    physicalHeld.add(key);
+    emoteStats.physical++;
+    if(!started||disposed||!state.value.settings.auto_emote||updateRequired.value||mainDependencies.blocked())return;
+    if([...physicalHeld].some(k=>/control|ctrl|alt|meta|win|super|command/i.test(k)))return;
+    if(!/^(?:[a-z0-9]|Key[A-Z]|Digit[0-9]|Num[0-9]|Space|Spacebar| |Comma|Dot|Period|Semicolon|Quote|Slash|Backslash|Minus|Equal|LeftBracket|RightBracket)$/i.test(key))return;
+    emoteStats.eligible++;
+    if(now-lastTypedAt>2000)typedKeys=0;
+    lastTypedAt=now;typedKeys++;
+    if(typedKeys<2||now<nextEmoteAt||emoteBusy)return;
+    const items=(mainDependencies.emotes?.()||[]).filter(x=>x.id&&x.src);
+    if(!items.length){emoteStats.reason='no-selection';return;}
+    emoteBusy=true;
+    try{
+      const context=await request('typing-context');
+      if(!context.editable){emoteStats.reason='not-editable';nextEmoteAt=Date.now()+500;return;}
+      // Fail closed outside a text caret/edit control, and discard delayed
+      // replies after typing stops or the user disables this feature.
+      if(!context.editable||disposed||!state.value.settings.auto_emote||updateRequired.value||mainDependencies.blocked()||Date.now()-lastTypedAt>500)return;
+      const current=(mainDependencies.emotes?.()||[]).filter(x=>x.id&&x.src);
+      if(!current.length)return;
+      mainDependencies.sendEmote(current[Math.floor(Math.random()*current.length)]);
+      emoteStats.sent++;emoteStats.reason='sent';
+      typedKeys=0;nextEmoteAt=Date.now()+2000+Math.floor(Math.random()*2000);
+    }catch(error){console.warn('[assistant] typing emote skipped',error);}
+    finally{emoteBusy=false;}
+  }
   const OUTBOX='wuwatappo-confirmed-rewards-v2';
   let outbox=[];
   try{outbox=JSON.parse(window.localStorage?.getItem(OUTBOX)||'[]');if(!Array.isArray(outbox))outbox=[];}catch{}
@@ -31,7 +66,7 @@ function createDesktopAssistant({ref, window, atlas, displayName=(type,name)=>na
     }catch(error){console.warn('[assistant] reward history pending',error);}
   }
   function observation(d){return {total:Number(d.total()),balance:Number(d.balance()),account:d.account(),
-    logged_in:!!d.loggedIn(),chests:d.chests?.()||{}};}
+    logged_in:!!d.loggedIn(),chests:d.chests?.()||{},emote_status:{...emoteStats,equipped:(d.emotes?.()||[]).length}};}
   async function flush(){
     if(!mainDependencies)return;
     if(flushing)return flushing;
@@ -65,14 +100,10 @@ function createDesktopAssistant({ref, window, atlas, displayName=(type,name)=>na
       button.click();break;
     }
   }
-  function showRequiredUpdate(result){
-    updateRequired.value=result.required===true;
-    if(!updateRequired.value)return;
-    if(updateDialog){updateDialog.update(result);return;}
-    updateDialog=createAssistantUpdateGate({window,result,
-      retry:async()=>{const r=await atlas.request('/update/check',{});showRequiredUpdate(r);return r;},
-      install:async()=>atlas.request('/update/install',{}),
-      quit:async()=>{if(started){await flush();await mainDependencies.quit();}else await request('quit');}});
+  function applyUpdateStatus(result){
+    // Updates are opt-in. Never turn a version check or a saved legacy policy
+    // into an application lock; installation is initiated in the console.
+    updateRequired.value=false;
   }
   async function startMain(d){
     if(started)return;started=true;mainDependencies=d;
@@ -84,7 +115,7 @@ function createDesktopAssistant({ref, window, atlas, displayName=(type,name)=>na
         const now=Date.now(),body={sent,confirmed};sent=confirmed=0;
         if(now-lastObserve>=1000){Object.assign(body,observation(d));lastObserve=now;await drainRewards();}
         const result=await request('tick',body);state.value={...state.value,...result};
-        if(result.update_required&&!updateRequired.value)showRequiredUpdate(await atlas.request('/update/status',{}));
+        if(result.update_required&&!updateRequired.value)applyUpdateStatus(await atlas.request('/update/status',{}));
         if(result.flush_generation){await flush();await request('flush-ack',{generation:result.flush_generation});}
         if(result.quit){await flush();await d.quit();return;}
         if(typeof result.open_settings==='string')await d.openView?.(result.open_settings);
@@ -112,26 +143,45 @@ function createDesktopAssistant({ref, window, atlas, displayName=(type,name)=>na
     }
     await rememberMonitor();window.setInterval(rememberMonitor,30000);
     await atlas.request('/update/healthy',{version:VERSION});
-    d.listenRoom(async(code,host)=>{if(!atlas.enabled.value&&code)await request('room',{code,host});});
+    let observedRoom=null;
+    d.listenRoom(async(code,host)=>{const new_visit=String(code||'')!==observedRoom;observedRoom=String(code||'');if(!atlas.enabled.value&&code)await request('room',{code,host,new_visit});});
     await d.listenJoin(async code=>{if(atlas.enabled.value){d.toast('本地全图鉴开启时无法进入联机');return;}if(!updateRequired.value)await d.join(code);});
     window.addEventListener('pagehide',()=>{disposed=true;window.clearTimeout(timer);});
   }
-  function closePanel(){dashboard?.close();dashboard=null;}
+  function closePanel(){dashboardGeneration++;dashboard?.close();dashboard=null;}
+  async function roomHistory(){await ready;return (await request('state')).rooms||[];}
+  async function favoriteRoom(code,favorite){await ready;return (await request('favorite',{code,favorite})).rooms||[];}
+  async function deleteRoom(code){await ready;return (await request('delete-room',{code})).rooms||[];}
+  async function joinHistoryRoom(code){
+    await ready;
+    if(atlas.enabled.value)throw new Error('请先关闭本地全图鉴，再加入联机房间');
+    if(updateRequired.value)throw new Error('请先完成版本更新');
+    if(!/^[A-Za-z0-9-]{1,32}$/.test(code))throw new Error('房间号无效');
+    return window.__TAURI_INTERNALS__.invoke('plugin:event|emit',{event:'local-assistant-join',payload:code});
+  }
   async function openPanel(initialTab='overview'){
     if(dashboard){dashboard.showTab(initialTab);dashboard.focus();return;}
+    requestedTab=initialTab;
     await ready;
-    dashboard=createAssistantDashboard({window,version:VERSION,atlas,initialTab,
+    return window.__TAURI_INTERNALS__.invoke('plugin:event|emit',{event:'cat-panel-action',payload:{type:'tab-click',key:'console'}});
+  }
+  async function mountConsole(mount){
+    closePanel();
+    const generation=dashboardGeneration;
+    await ready;
+    if(generation!==dashboardGeneration||!mount?.isConnected)return;
+    dashboard=createAssistantDashboard({window,version:VERSION,atlas,mount,initialTab:requestedTab,
       getState:async()=>{const v=await request('state');state.value=v;return v;},
       configure:async changes=>{state.value=await request('configure',{settings:changes});return state.value;},
       reset:()=>request('reset'),join:code=>window.__TAURI_INTERNALS__.invoke('plugin:event|emit',{event:'local-assistant-join',payload:code}),
-      favorite:(code,favorite)=>request('favorite',{code,favorite}),onClose:()=>{dashboard=null;}});
+      favorite:(code,favorite)=>request('favorite',{code,favorite}),deleteRoom,openProject:()=>request('project'),onClose:()=>{dashboard=null;}});
   }
   async function pollPolicy(){
     if(disposed)return;
-    try{const result=await atlas.request('/update/status',{});showRequiredUpdate(result);}catch{}
+    try{const result=await atlas.request('/update/status',{});applyUpdateStatus(result);}catch{}
     if(!disposed)window.setTimeout(pollPolicy,15000);
   }
   ready.then(pollPolicy).catch(()=>{});
   window.addEventListener('pagehide',()=>{disposed=true;closePanel();});
-  return {ready,state,updateRequired,startMain,openPanel,closePanel,flush,flushBeforeSwitch,beginChest,chestSucceeded};
+  return {ready,state,updateRequired,startMain,openPanel,mountConsole,closePanel,flush,flushBeforeSwitch,beginChest,chestSucceeded,physicalKey,physicalRelease,roomHistory,favoriteRoom,deleteRoom,joinHistoryRoom,openProject:()=>request('project')};
 }

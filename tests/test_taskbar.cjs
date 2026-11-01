@@ -1,0 +1,15 @@
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict'),acorn=require('../tools/acorn.cjs');
+const build=path.join(__dirname,'../build'),manifest=JSON.parse(fs.readFileSync(path.join(build,'build_manifest_v2.json')));
+const shared=fs.readFileSync(path.join(build,'frontend_v2/assets',manifest.shared),'utf8'),main=fs.readFileSync(path.join(build,'frontend_v2/assets',manifest.main),'utf8');
+function parse(source){const found=[];function walk(n){if(!n||typeof n!=='object')return;if(n.type)found.push(n);for(const[k,v]of Object.entries(n)){if(k==='start'||k==='end')continue;if(Array.isArray(v))v.forEach(walk);else if(v?.type)walk(v);}}walk(acorn.parse(source,{ecmaVersion:'latest',sourceType:'module'}));return found;}
+const nodes=parse(shared),stored=new Map(),calls=[];
+const c=vm.createContext({localStorage:{getItem:k=>stored.get(k)??null,setItem:(k,v)=>stored.set(k,v)},console,Ct:async(command,payload)=>calls.push({command,payload}),me(){}});
+for(const name of ['DESKTOP_CAT_SETTINGS_STORAGE_KEY','PET_SCALE_MIN','PET_SCALE_MAX','PET_SCALE_DEFAULT','DEFAULT_DESKTOP_CAT_SETTINGS']){const n=nodes.find(n=>n.type==='VariableDeclarator'&&n.id.name===name);assert(n);c[name]=vm.runInContext('('+shared.slice(n.init.start,n.init.end)+')',c);}
+for(const name of ['clampPetScale','__originalLoadDesktopCatSettings','loadDesktopCatSettings','persistDesktopCatSettings']){const n=nodes.find(n=>n.type==='FunctionDeclaration'&&n.id.name===name);assert(n);vm.runInContext(shared.slice(n.start,n.end),c);}
+const get=()=>vm.runInContext('loadDesktopCatSettings()',c),persist=changes=>{c.changes=changes;return vm.runInContext('persistDesktopCatSettings(changes)',c);};
+assert.equal(get().showTaskbarIcon,false);assert.equal(stored.get('wuwatappo-taskbar-default-v1'),'1');
+stored.clear();stored.set('wuwatappo-settings',JSON.stringify({showTaskbarIcon:true,windowOpacity:80,petScale:125,gameMode:true}));stored.set('account-private','unchanged');
+let s=get();assert.equal(s.showTaskbarIcon,false);assert.equal(s.windowOpacity,80);assert.equal(s.petScale,125);assert.equal(s.gameMode,true);assert.equal(JSON.parse(stored.get('wuwatappo-settings')).showTaskbarIcon,false);
+persist({showTaskbarIcon:true});assert.equal(get().showTaskbarIcon,true);assert.equal(get().showTaskbarIcon,true);assert.equal(stored.get('account-private'),'unchanged');
+const helper=parse(main).find(n=>n.type==='FunctionDeclaration'&&main.slice(n.start,n.end).includes('"set_main_skip_taskbar"'));assert(helper);vm.runInContext(main.slice(helper.start,helper.end),c);
+(async()=>{c.show=false;await vm.runInContext(helper.id.name+'(show)',c);assert.equal(calls[0].command,'set_main_skip_taskbar');assert.equal(calls[0].payload.skip,true);c.show=true;await vm.runInContext(helper.id.name+'(show)',c);assert.equal(calls[1].payload.skip,false);assert(main.includes('"tray-quit"'));console.log('taskbar passed: default hidden, one-time migration preserves other settings, user can re-enable, original native skip-taskbar command and tray retained');})().catch(e=>{console.error(e);process.exitCode=1;});

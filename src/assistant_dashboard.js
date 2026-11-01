@@ -26,6 +26,12 @@ function assistantUi(window) {
     .wt-console footer{padding:10px 24px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:11px;color:var(--muted);background:#faf9f6;flex-shrink:0}.wt-console footer button{font-size:11px;padding:4px 10px;min-height:28px}.wt-notice{font-size:12px;color:#9c6c32;padding:6px 0;min-height:20px}
     .wt-gate{position:fixed;inset:0;z-index:2147483500;background:#f7f4ee;display:grid;place-items:center;padding:16px;overflow:auto}.wt-gate article{max-width:480px;width:100%;padding:24px;background:white;border:1px solid var(--line);border-radius:18px;box-shadow:0 10px 30px #0001}.wt-gate h2{font-size:22px}.wt-gate p{margin:12px 0;font-size:13px}.wt-gate .wt-controls{display:flex;flex-wrap:wrap;gap:8px}
     @media(max-width:680px){.wt-stats{grid-template-columns:repeat(2,1fr)}.wt-content{padding:14px}.wt-console header{padding:16px 16px 10px}.wt-console nav{padding:0 14px 10px}.wt-console footer{padding:10px 14px}.wt-progress-grid{gap:14px}.wt-speeds{gap:6px}.wt-console .wt-speed{padding:8px}}
+    .wt-console.wt-embedded{--ink:#986f50;--muted:#b29a7e;--line:#e6caa7;--cream:#ffedca;position:relative;inset:auto;z-index:1;height:100%;width:100%;background:transparent;border:0;border-radius:0;box-shadow:none;font-family:inherit}
+    .wt-embedded .wt-card{background:#fff6e1a6;border-color:#e8cfae;border-radius:16px}.wt-embedded .wt-card.warm{background:#f5dfba80}.wt-embedded .wt-stat:first-child{background:#ffe6b780;border-color:#edc794}
+    .wt-embedded button{background:#ffe7bd;color:#9c6e49;border-color:#e5bd8a;border-radius:15px}.wt-embedded button:hover{background:#ffdda5}.wt-embedded .wt-primary{background:#ffd294;border-color:#e8b471;color:#976238}
+    .wt-embedded nav{border-color:#e8d1b0}.wt-embedded nav button{background:transparent}.wt-embedded nav button.active{background:#ffd69d;color:#976238}.wt-embedded footer{background:transparent;border-color:#e8d1b0}.wt-embedded h2{color:#976238}.wt-embedded .wt-number{color:#976238}
+    .wt-embedded .wt-speed{background:#f9ebd1a0}.wt-embedded .wt-speed.active{background:#ffe0ab;border-color:#e4b576}.wt-embedded input[type=number]{background:#fff7e7;border-color:#e4c59e}.wt-embedded .wt-track{background:#ead7b8}.wt-embedded .wt-log{border-color:#ead9bd}.wt-embedded .wt-badge{background:#dfebcf;color:#74855c}
+    .wt-console.wt-embedded header{padding-right:88px}
     `;
     doc.head.append(style);
   }
@@ -34,35 +40,18 @@ function assistantUi(window) {
   return {el,button};
 }
 
-function createAssistantUpdateGate({window,result,retry,install,quit}){
-  const {el,button}=assistantUi(window),root=el('section',undefined,window.document.body,'wt-gate');
-  root.setAttribute('role','alertdialog');root.setAttribute('aria-modal','true');root.tabIndex=-1;
-  const card=el('article',undefined,root),title=el('h2','需要更新',card),message=el('p','',card);
-  el('p','新版本来自 Averionx/WuwaTappo-FullAtlas。更新会保留账号、图鉴缓存与设置；确认后自动下载、校验、备份并重启。',card,'wt-muted');
-  const actions=el('div',undefined,card,'wt-controls'),status=el('p','',card,'wt-notice');
-  let busy=false;
-  const update=button('一键更新',actions,async()=>{
-    if(busy)return;busy=true;update.disabled=true;status.textContent='正在下载并校验，请稍候…';
-    try{const r=await install();status.textContent=r.message;}catch(e){status.textContent=e.message;busy=false;update.disabled=false;}
-  },'wt-primary');
-  button('重试检测',actions,async()=>{try{const r=await retry();status.textContent=r.message;}catch(e){status.textContent=e.message;}});
-  button('退出桌宠',actions,()=>quit().catch(e=>{status.textContent=e.message;}));
-  const apply=r=>{title.textContent='请更新至 '+r.version;message.textContent=r.message;};apply(result);root.focus();
-  return {update:apply};
-}
-
 function createAssistantDashboard(d){
   const {window}=d,{el,button}=assistantUi(window),doc=window.document;
   let closed=false,timer=null,refreshing=false,tab='overview',value=null,renderView=()=>{},pending=0,saveQueue=Promise.resolve();
-  const root=el('section',undefined,doc.body,'wt-console');root.tabIndex=-1;root.setAttribute('role','dialog');root.setAttribute('aria-label','桌宠控制台');
+  const root=el('section',undefined,d.mount||doc.body,'wt-console'+(d.mount?' wt-embedded':''));root.tabIndex=-1;root.setAttribute('role',d.mount?'region':'dialog');root.setAttribute('aria-label','桌宠控制台');
   const header=el('header',undefined,root);
   const eyebrow=el('div',undefined,header,'wt-row wt-between');el('div','WUWA TAPPO / 后台助手',eyebrow,'wt-eyebrow');
-  button('×',eyebrow,close,'wt-close').setAttribute('aria-label','关闭控制台，后台继续运行');
+  if(!d.mount)button('×',eyebrow,close,'wt-close').setAttribute('aria-label','关闭控制台，后台继续运行');
   const heading=el('div',undefined,header,'wt-row wt-between');el('h2','桌宠控制台',heading);const badge=el('span','读取中',heading,'wt-badge paused');
-  const nav=el('nav',undefined,root),content=el('main',undefined,root,'wt-content'),footer=el('footer',undefined,root);
-  el('span','关闭面板后，后台任务继续运行',footer);const version=button('v'+d.version+' · 检查更新',footer,()=>showTab('settings'));
+  const nav=el('nav',undefined,root),content=el('main',undefined,root,'wt-content common-scrollbar2'),footer=el('footer',undefined,root);
+  button('GitHub · 项目与反馈',footer,()=>d.openProject?.().catch(e=>{notice.textContent=e.message;}));const version=button('v'+d.version+' · 检查更新',footer,()=>showTab('updates'));
   const notice=el('div','',header,'wt-notice');
-  const tabs=[['overview','概览'],['rewards','开箱记录'],['daily','每日统计'],['rooms','房间历史'],['settings','设置与更新']],navButtons={};
+  const tabs=[['overview','概览'],['rewards','开箱记录'],['daily','每日统计'],['rooms','房间历史'],['settings','功能设置'],['updates','更新']],navButtons={};
   for(const [key,label]of tabs)navButtons[key]=button(label,nav,()=>showTab(key));
   const fmt=n=>Number(n||0).toLocaleString('zh-CN');
   function close(){if(closed)return;closed=true;window.clearInterval(timer);root.remove();d.onClose?.();}
@@ -73,9 +62,9 @@ function createAssistantDashboard(d){
   }
   function card(parent=content,cls=''){return el('section',undefined,parent,'wt-card '+cls);}
   function setBadge(){const r=value?.runtime||{},on=value?.settings?.enabled;
-    const chest=!!value?.settings?.auto_chest;
-    badge.textContent=value?.update_required?'等待更新':on?(r.quiet===false?(chest?'点击避让 · 开箱值守':'输入中 · 点击暂停'):'运行中'):(chest?(r.logged_in?'开箱值守':'开箱待登录'):'已暂停');
-    badge.className='wt-badge'+((!on&&!chest)||value?.update_required?' paused':'');}
+    const chest=!!value?.settings?.auto_chest,emote=!!value?.settings?.auto_emote;
+    badge.textContent=value?.update_required?'等待更新':on?(r.quiet===false?(chest?'点击避让 · 开箱值守':'输入中 · 点击暂停'):'运行中'):(chest?(r.logged_in?'开箱值守':'开箱待登录'):emote?'打字表情待命':'已暂停');
+    badge.className='wt-badge'+((!on&&!chest&&!emote)||value?.update_required?' paused':'');}
   function logRows(parent,items){parent.replaceChildren();if(!items.length){el('div','暂无真实开箱记录。原版账号成功领奖后会自动记录。',parent,'wt-empty');return;}
     for(const item of items){
       const row=el('div',undefined,parent,'wt-log');el('span','♧',row,'wt-log-icon');const text=el('div',undefined,row,'wt-log-main');
@@ -87,7 +76,8 @@ function createAssistantDashboard(d){
     tab=key;content.replaceChildren();notice.textContent='';for(const[k,n]of Object.entries(navButtons))n.className=k===key?'active':'';
     if(key==='overview'){
       const hero=card(content,'warm');el('h3','后台陪伴，安心打字',hero);const description=el('p','',hero,'wt-muted');
-      const controls=el('div',undefined,hero,'wt-controls');button('启动后台',controls,()=>change({enabled:true}),'wt-primary');button('暂停点击',controls,()=>change({enabled:false}));button('停止全部自动任务',controls,()=>change({enabled:false,auto_chest:false}));
+      const controls=el('div',undefined,hero,'wt-controls');button('启动后台',controls,()=>change({enabled:true}),'wt-primary');button('暂停点击',controls,()=>change({enabled:false}));button('停止全部自动任务',controls,()=>change({enabled:false,auto_chest:false,auto_emote:false}));
+      const quickLocal=button('开启本地全图鉴',controls,async()=>{if(d.atlas.busy.value)return;quickLocal.disabled=true;try{await d.atlas.setEnabled(!d.atlas.enabled.value);notice.textContent=d.atlas.enabled.value?'本地全图鉴已开启':'已恢复账号图鉴';}catch(e){notice.textContent=e.message;}finally{quickLocal.disabled=d.atlas.busy.value;quickLocal.textContent=d.atlas.enabled.value?'关闭本地全图鉴':'开启本地全图鉴';}});
       const stats=el('div',undefined,content,'wt-stats'),numbers=[];
       for(const label of ['可用点数','累计点数','本次发送','本次开箱']){const c=card(stats,'wt-stat');el('div',label,c,'wt-label');numbers.push(el('div','—',c,'wt-number'));el('div',label==='可用点数'?'原版账号余额':label==='累计点数'?'原版累计数据':label==='本次发送'?'关闭窗口不会清零':'真实成功领取',c,'wt-label');}
       const chests=card();el('h3','宝箱进度',chests);const grid=el('div',undefined,chests,'wt-progress-grid'),progress={};
@@ -97,7 +87,8 @@ function createAssistantDashboard(d){
       for(const[n,label]of [[1,'轻缓'],[5,'标准'],[10,'快速']]){const b=button('',speedGrid,()=>change({speed:n}),'wt-speed');el('strong',label+' · '+n+' 次/秒',b);el('span','键盘或鼠标操作时自动暂停',b);speedButtons[n]=b;}
       const recent=card(),r=el('div',undefined,recent,'wt-row wt-between');el('h3','最近获得',r);button('查看全部',r,()=>showTab('rewards'));const logs=el('div',undefined,recent);
       renderView=()=>{const r=value.runtime||{},s=value.settings;
-        description.textContent=(r.local_atlas?'本地全图鉴已开启':'使用账号原图鉴')+' · 点数与开箱始终使用同一个真实账号';
+        description.textContent=(d.atlas.enabled.value?'本地全图鉴已开启':'使用账号原图鉴')+' · 点数与开箱始终使用同一个真实账号';
+        quickLocal.textContent=d.atlas.enabled.value?'关闭本地全图鉴':'开启本地全图鉴';quickLocal.disabled=d.atlas.busy.value;quickLocal.setAttribute('aria-pressed',d.atlas.enabled.value);
         [r.balance,r.total,value.session,value.session_chests].forEach((n,i)=>numbers[i].textContent=n===undefined?'—':fmt(n));
         for(const side of ['left','right']){const c=r.chests?.[side],ms=c?.remaining||0;progress[side].text.textContent=!r.logged_in?'需要登录':c?.ready?'可开启':Math.floor(ms/60000)+':'+String(Math.ceil(ms/1000)%60).padStart(2,'0');progress[side].fill.style.width=(c?.ready?100:Math.max(0,100*(1-ms/(r.chests?.cooldown||1800000))))+'%';}
         hint.textContent=(s.auto_chest?'自动开箱已开启':'自动开箱已关闭')+' · 余额至少 '+fmt(Math.max(s.threshold,1000))+'，按钮出现约 2 秒后领取';
@@ -111,16 +102,37 @@ function createAssistantDashboard(d){
       renderView=()=>{const week=value.weekly?.normal||[],max=Math.max(1,...week.map(x=>x.count));summary.textContent='今日 '+fmt(week.at(-1)?.count)+' · 昨日 '+fmt(week.at(-2)?.count);chart.replaceChildren();for(const day of week){const col=el('div',undefined,chart,'wt-column');el('div',fmt(day.count),col);const bar=el('div','',col,'wt-bar');bar.style.height=Math.max(3,120*day.count/max)+'px';el('div',day.date.slice(5),col);}legacy.textContent=value.legacy_local?.total?'旧版模拟点数 '+fmt(value.legacy_local.total)+' 已单独存档，不计入真实账号与此统计。':'';};
     }else if(key==='rooms'){
       const c=card();el('h3','去过的房间',c);el('p','成功进入后记录房间号与房主，收藏后置顶。本地全图鉴开启时不能进入联机。',c,'wt-muted');const list=el('div',undefined,c);
-      renderView=()=>{list.replaceChildren();if(!value.rooms?.length)el('div','还没有房间历史',list,'wt-empty');for(const room of value.rooms||[]){const row=el('div',undefined,list,'wt-log');button(room.favorite?'★':'☆',row,async()=>{try{await d.favorite(room.code,!room.favorite);await refresh();}catch(e){notice.textContent=e.message;}});const join=button(room.code+' · '+(room.host||'未知房主'),row,()=>d.join(room.code).catch(e=>{notice.textContent=e.message;}));join.disabled=d.atlas.enabled.value||value.update_required;}};
-    }else{
+      renderView=()=>{list.replaceChildren();if(!value.rooms?.length)el('div','还没有房间历史',list,'wt-empty');for(const room of value.rooms||[]){const row=el('div',undefined,list,'wt-log');button(room.favorite?'★':'☆',row,async()=>{try{await d.favorite(room.code,!room.favorite);await refresh();}catch(e){notice.textContent=e.message;}});const join=button(room.code+' · '+(room.host||'未知房主'),row,()=>d.join(room.code).catch(e=>{notice.textContent=e.message;}));join.disabled=d.atlas.enabled.value||value.update_required;button('删除记录',row,async()=>{try{await d.deleteRoom(room.code);await refresh();}catch(e){notice.textContent=e.message;}});}};
+    }else if(key==='settings'){
       const c=card();el('h3','自动化设置',c);const fields={};
-      for(const[key,title,detail]of [['enabled','后台自动点击','使用桌宠原版计数；打字、Shift 和鼠标拖拽时暂停'],['auto_chest','自动开宝箱','不等待键鼠空闲；沿用原版登录、冷却、余额与服务器奖励'],['remember_monitor','记住显示器','下次启动恢复；找不到原显示器时保持原位']]){
+      const localRow=el('label',undefined,c,'wt-setting'),localText=el('div',undefined,localRow);el('h3','本地全图鉴',localText);el('p','本机自由装扮；开启时无法进入联机，关闭后恢复账号物品',localText,'wt-muted');const localSwitch=el('input',undefined,localRow);localSwitch.type='checkbox';localSwitch.setAttribute('aria-label','本地全图鉴');localSwitch.onchange=async()=>{localSwitch.disabled=true;try{await d.atlas.setEnabled(localSwitch.checked);}catch(e){notice.textContent=e.message;}finally{localSwitch.checked=d.atlas.enabled.value;localSwitch.disabled=false;}};
+      for(const[key,title,detail]of [['enabled','后台自动点击','使用桌宠原版计数；打字、Shift 和鼠标拖拽时暂停'],['auto_chest','自动开宝箱','不等待键鼠空闲；沿用原版登录、冷却、余额与服务器奖励'],['auto_emote','打字自动表情','先在背包装备表情；真实文字输入时偶尔随机弹出，联机沿用手动发送，其他人可见。后台连点不触发'],['remember_monitor','记住显示器','下次启动恢复；找不到原显示器时保持原位']]){
         const label=el('label',undefined,c,'wt-setting'),t=el('div',undefined,label);el('h3',title,t);el('p',detail,t,'wt-muted');const input=el('input',undefined,label);input.type='checkbox';input.setAttribute('aria-label',title);input.onchange=()=>change({[key]:input.checked});fields[key]=input;
       }
+      const emoteHint=el('p','',c,'wt-muted');
       const row=el('label',undefined,c,'wt-setting');const t=el('div',undefined,row);el('h3','自动开箱余额阈值',t);el('p','仍需达到原版宝箱实际费用（当前至少 1,000）',t,'wt-muted');const limit=el('input',undefined,row);limit.type='number';limit.min=1;limit.max=1000000000;limit.onchange=()=>change({threshold:Number(limit.value)});fields.threshold=limit;
-      const u=card();el('h3','仓库更新监控',u);el('p','监控 Averionx/WuwaTappo-FullAtlas 的正式 Release，每 30 分钟检查。发现完整且可校验的新版后必须升级，关闭面板不会跳过。',u,'wt-muted');const updates=el('p','当前版本 '+d.version+' · 官方基底 1.0.2',u),check=button('检查更新',u,async()=>{check.disabled=true;try{const r=await d.atlas.request('/update/check',{});updates.textContent=r.message;}catch(e){updates.textContent=e.message;}finally{check.disabled=false;}});updates.style.margin='12px 0';
       const sync=card();el('h3','本地图鉴资源',sync);el('p','本地开关只影响物品展示与本机装扮，登录、点数、开箱、图片下载和版本检查继续使用网络。',sync,'wt-muted');button('检查并同步图鉴',sync,async()=>{try{const r=await d.atlas.request('/sync',{force:true});notice.textContent=r.status==='running'?'图鉴资源正在后台同步':'同步请求已提交';}catch(e){notice.textContent=e.message;}});
-      renderView=()=>{for(const[k,input]of Object.entries(fields)){if(doc.activeElement===input)continue;if(input.type==='checkbox')input.checked=!!value.settings[k];else input.value=value.settings[k];}};
+      renderView=()=>{if(doc.activeElement!==localSwitch)localSwitch.checked=d.atlas.enabled.value;localSwitch.disabled=d.atlas.busy.value;const s=value.runtime?.emote_status||{};emoteHint.textContent=!value.settings.auto_emote?'自动表情已关闭':!s.equipped?'请先在背包装备表情':s.reason==='not-editable'?'尚未识别到文字输入框':`打字表情：已装备 ${s.equipped} 个 · 本次触发 ${s.sent||0} 次 · 持续打字间隔 2～4 秒`;for(const[k,input]of Object.entries(fields)){if(doc.activeElement===input)continue;if(input.type==='checkbox')input.checked=!!value.settings[k];else input.value=value.settings[k];}};
+    }else if(key==='updates'){
+      const c=card();el('h3','版本更新',c);el('p','先检查官方版本，再匹配 GitHub 上的适配版。没有对应适配包时请等待作者更新；不强制升级。',c,'wt-muted');
+      const versionRows=el('div',undefined,c);versionRows.style.margin='14px 0';const versions={};
+      for(const[key,label]of [['official','官方最新版'],['github','修改版最新版'],['current','当前安装版本']]){const row=el('div',undefined,versionRows,'wt-setting');el('span',label,row);versions[key]=el('strong',key==='current'?'修改版 v'+d.version+' · 基底 v1.0.3':'等待检查',row);}
+      const message=el('p','点击检查更新获取版本信息',c),actions=el('div',undefined,c,'wt-controls');message.style.whiteSpace='pre-line';let busy=false,result=null;
+      const install=button('一键升级',actions,async()=>{if(busy||!result?.available)return;busy=true;install.disabled=true;message.textContent='正在下载并校验，升级将保留账号与设置…';try{message.textContent=(await d.atlas.request('/update/install',{})).message;}catch(e){message.textContent=e.message;busy=false;install.disabled=false;}},'wt-primary');install.disabled=true;
+      const apply=r=>{
+        result=r;
+        const officialHint={newer:'有新版',current:'版本一致'}[r.official_state];
+        const modHint={available:'可更新',current:'版本一致',waiting:'等待适配',pending:'等待升级包',local_newer:'本机版本较新'}[r.mod_state];
+        versions.official.textContent=r.official_error?'检查失败':r.official_checked?'v'+r.official_version+(officialHint?'（'+officialHint+'）':''):'等待检查';
+        versions.github.textContent=r.github_error?'检查失败':r.github_checked?'v'+r.github_version+'（GitHub 已发布'+(modHint?' · '+modHint:'')+'）':'等待检查';
+        versions.current.textContent='修改版 v'+(r.current_version||d.version)+' · 基底 v'+(r.client_version||'1.0.3');
+        message.textContent=r.official_message&&r.mod_message?r.official_message+'\n'+r.mod_message:r.message;
+        install.disabled=!r.available||!!r.waiting_for_adapter||busy;
+      };
+      const check=button('检查官方与适配版',actions,async()=>{if(busy)return;busy=true;check.disabled=true;install.disabled=true;message.textContent='正在检查官方与 GitHub 版本…';try{const r=await d.atlas.request('/update/check',{});busy=false;apply(r);}catch(e){message.textContent='检查失败：'+e.message;busy=false;}finally{check.disabled=false;}});
+      d.atlas.request('/update/status',{}).then(r=>{if(!closed&&tab==='updates'&&!busy)apply(r);}).catch(e=>{message.textContent=e.message;});
+      el('p','可以稍后更新。官方新版发布不代表修改版已适配；这里不会下载官方安装器覆盖修改版。',c,'wt-muted');renderView=()=>{};
+      check.onclick();
     }
     if(value)paint();
   }

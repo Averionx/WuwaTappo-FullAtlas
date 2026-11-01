@@ -12,11 +12,12 @@ from desktop_updater import FileTransaction, unpack, safe_name, validate_manifes
 
 class UpdaterTests(unittest.TestCase):
     def setUp(self):
+        self.official_patch=patch.object(Updater,'check_official',return_value=None);self.official_patch.start()
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
         self.contents={'WuwaTappo.Local.exe':b'new-pet','LocalGalleryHost.exe':b'new-host',
                        'package_config.json':b'{"mod_version":"1.1","client_version":"1.0.2"}'}
         self.manifest={'schema':1,'version':'1.1','files':[{'path':n,'size':len(v),'sha256':hashlib.sha256(v).hexdigest()} for n,v in self.contents.items()]}
-    def tearDown(self):self.temp.cleanup()
+    def tearDown(self):self.official_patch.stop();self.temp.cleanup()
     def archive(self,extra=None):
         path=self.root/'update.zip'
         with zipfile.ZipFile(path,'w') as z:
@@ -69,13 +70,14 @@ class UpdaterTests(unittest.TestCase):
         sums=('a'*64+'  WuwaTappo-FullAtlas-1.2-x64-update.zip\n').encode()
         with patch.object(updater,'fetch',side_effect=[json.dumps(release).encode(),sums]):
             return updater.check()
-    def test_formal_release_required_cached_and_survives_outage(self):
+    def test_formal_release_is_optional_cached_and_survives_outage(self):
         updater=Updater(self.root,{'mod_version':'1.1'})
-        self.assertTrue(self.check_release(updater,self.release())['required'])
+        self.assertFalse(self.check_release(updater,self.release())['required'])
+        self.assertTrue(updater.status()['available'])
         other=Updater(self.root,{'mod_version':'1.1'})
-        self.assertTrue(other.status()['required'])
+        self.assertFalse(other.status()['required'])
         with patch.object(other,'fetch',side_effect=OSError('offline')),patch.object(other,'public_release',side_effect=OSError('offline')):
-            self.assertTrue(other.check()['required'])
+            self.assertFalse(other.check()['required'])
         self.assertFalse(Updater(self.root,{'mod_version':'1.2'}).status()['required'])
     def test_draft_prerelease_incomplete_do_not_lock(self):
         for release in [self.release(draft=True),self.release(prerelease=True),self.release(complete=False)]:
@@ -84,19 +86,87 @@ class UpdaterTests(unittest.TestCase):
     def test_bad_checksum_never_creates_mandatory_policy(self):
         updater=Updater(self.root,{'mod_version':'1.1'})
         with patch.object(updater,'fetch',side_effect=[json.dumps(self.release()).encode(),b'invalid']):
-            with self.assertRaises(ValueError):updater.check()
+            self.assertIsNotNone(updater.check()['error'])
         self.assertFalse(updater.status()['required'])
     def test_frontend_health_must_match_package_version(self):
         updater=Updater(self.root,{'mod_version':'1.2'})
         with self.assertRaises(ValueError):updater.healthy('1.1')
         self.assertTrue(updater.healthy('1.2')['ok'])
+    def test_explicit_version_comparison_states(self):
+        cases=[
+            # installed, base, official latest, published base, package ready, expected
+            ('1.2','1.0.3','1.0.3','1.0.3',True,'current','current',False),
+            ('1.1','1.0.3','1.0.3','1.0.3',True,'current','available',True),
+            ('1.1','1.0.3','1.0.4','1.0.3',True,'newer','waiting',False),
+            ('1.1','1.0.3','1.0.4','1.0.4',True,'newer','available',True),
+            ('1.1','1.0.3','1.0.4','1.0.4',False,'newer','waiting',False),
+            ('1.2','1.0.3','1.0.4','1.0.4',True,'newer','waiting',False),
+            ('1.3.4','1.0.3','1.0.3','1.0.2',True,'current','local_newer',False),
+            ('1.1','1.0.3','1.0.3','1.0.3',False,'current','pending',False),
+            ('1.1','1.0.3','1.0.3','1.0.2',True,'current','waiting',False),
+            ('1.1','1.0.3','1.0.3','',True,'current','waiting',False),
+        ]
+        for installed,base,official,published_base,complete,official_state,mod_state,available in cases:
+            with self.subTest(installed=installed,official=official,published_base=published_base,complete=complete):
+                self.policy_file_cleanup()
+                updater=Updater(self.root,{'mod_version':installed,'client_version':base})
+                updater.official_version=official;updater.official_checked=True
+                release=self.release(complete=complete);release['body']='适配官方桌宠 **'+published_base+'**。'
+                result=self.check_release(updater,release)
+                self.assertEqual(result['official_state'],official_state)
+                self.assertEqual(result['mod_state'],mod_state)
+                self.assertEqual(result['available'],available)
+                self.assertEqual(result['github_version'],'1.2')
+                self.assertIn(official,result['official_message'])
+                self.assertFalse(result['required'])
+                if mod_state=='current':self.assertIn('版本一致',result['mod_message'])
+                if mod_state=='waiting':self.assertIn('请等待',result['mod_message'])
+                self.assertEqual(updater.status()['message'],result['message'])
+    def policy_file_cleanup(self):
+        (self.root/'update_policy.json').unlink(missing_ok=True)
+    def test_official_failure_is_not_reported_as_same_version(self):
+        updater=Updater(self.root,{'mod_version':'1.2','client_version':'1.0.3'})
+        with patch.object(updater,'check_official',side_effect=OSError('offline')):
+            result=self.check_release(updater,self.release())
+        self.assertEqual(result['official_state'],'error')
+        self.assertIn('失败',result['official_message'])
+        self.assertEqual(result['mod_state'],'current')
+    def test_github_failure_is_not_reported_as_no_update(self):
+        updater=Updater(self.root,{'mod_version':'1.2','client_version':'1.0.3'})
+        with patch.object(updater,'fetch',side_effect=OSError('offline')),patch.object(updater,'public_release',side_effect=OSError('offline')):
+            result=updater.check()
+        self.assertEqual(result['mod_state'],'error')
+        self.assertIn('检查失败',result['mod_message'])
+    def test_new_official_without_matching_adapter_waits_without_lock(self):
+        updater=Updater(self.root,{'mod_version':'1.1','client_version':'1.0.2'})
+        updater.official_version='1.0.4';updater.official_checked=True
+        release=self.release();release['body']='适配官方 **1.0.3**。'
+        result=self.check_release(updater,release)
+        self.assertTrue(result['waiting_for_adapter']);self.assertFalse(result['available']);self.assertFalse(result['required'])
+    def test_matching_official_adapter_is_optional(self):
+        updater=Updater(self.root,{'mod_version':'1.1','client_version':'1.0.2'})
+        updater.official_version='1.0.4';updater.official_checked=True
+        release=self.release();release['body']='适配官方 **1.0.4**。'
+        result=self.check_release(updater,release)
+        self.assertTrue(result['available']);self.assertFalse(result['required']);self.assertFalse(result['waiting_for_adapter'])
+        self.assertEqual(updater.available['client_version'],'1.0.4')
+    def test_unknown_adapter_base_never_claims_new_official_support(self):
+        updater=Updater(self.root,{'mod_version':'1.1','client_version':'1.0.2'})
+        updater.official_version='1.0.4'
+        result=self.check_release(updater,self.release())
+        self.assertTrue(result['waiting_for_adapter']);self.assertFalse(result['available'])
+    def test_legacy_required_flag_does_not_lock(self):
+        updater=Updater(self.root,{'mod_version':'1.1'})
+        self.check_release(updater,self.release())
+        data=json.loads(updater.policy_file.read_text());data['required']=True;updater.policy_file.write_text(json.dumps(data))
+        self.assertFalse(Updater(self.root,{'mod_version':'1.1'}).status()['required'])
     def test_invalid_later_release_cannot_clear_confirmed_requirement(self):
         updater=Updater(self.root,{'mod_version':'1.1'})
         self.check_release(updater,self.release())
         bad=self.release()
         bad['assets'][0]['browser_download_url']=bad['assets'][0]['browser_download_url'].replace('/v1.2/','/v9.9/')
         result=self.check_release(updater,bad)
-        self.assertTrue(result['required'])
+        self.assertFalse(result['required'])
         self.assertEqual(result['version'],'1.2')
     def helper_fixture(self):
         target=self.root/'install';target.mkdir()

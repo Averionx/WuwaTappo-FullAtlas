@@ -13,6 +13,7 @@ import urllib.request
 import uuid
 import zipfile
 from desktop_assistant import atomic_json
+from process_launch import popen_independent
 
 REPO = 'Averionx/WuwaTappo-FullAtlas'
 TOP_LEVEL = {'WuwaTappo.Local.exe', 'LocalGalleryHost.exe', 'package_config.json',
@@ -148,6 +149,14 @@ class Updater:
         self.policy_file = self.root/'update_policy.json'
         self.last_error = None
         self.checked_at = 0
+        self.official_version = config.get('client_version','')
+        self.official_checked = False
+        self.official_error = None
+        self.waiting_for_adapter = False
+        self.release_base = ''
+        self.github_version = ''
+        self.github_checked = False
+        self.github_error = None
         if self.policy_file.exists():
             try:
                 saved = json.loads(self.policy_file.read_text(encoding='utf-8'))
@@ -177,17 +186,28 @@ class Updater:
 
     def check(self):
         with self.check_lock:
+            try:self.check_official()
+            except Exception as error:self.official_error=str(error)
             try:
-                result = self._check()
+                self._check()
                 self.checked_at = int(time.time())
                 self.last_error = None
-                return {**self.status(), **result}
+                self.github_error = None
+                return self.status()
             except Exception as error:
                 self.last_error = str(error)
-                # A verified mandatory release stays required across outages.
-                if self.available:
-                    return self.status()
-                raise
+                self.github_error = str(error)
+                return self.status()
+
+    def check_official(self):
+        url='https://mc-wuwatappo.kurogames-global.com/app/version-json/latest.json?t='+str(int(time.time()))
+        value=json.loads(self.fetch(url))
+        version_tuple(value['version'])
+        self.official_version=value['version'];self.official_checked=True;self.official_error=None
+        current=self.config.get('client_version','')
+        cached_base=(self.available or {}).get('client_version','')
+        if current and version_tuple(self.official_version)>version_tuple(current):
+            self.waiting_for_adapter=not cached_base or version_tuple(cached_base)<version_tuple(self.official_version)
 
     def _check(self):
         try:
@@ -197,25 +217,41 @@ class Updater:
             # unauthenticated API quota. No account token is needed.
             release = self.public_release()
         version = release['tag_name'].removeprefix('v')
+        version_tuple(version)
         if release.get('draft') or release.get('prerelease'):
+            return self.status()
+        self.github_version=version;self.github_checked=True;self.github_error=None
+        match=re.search(r'(?:适配官方(?:桌宠)?|官方基底)[\s*：:]*([0-9]+(?:\.[0-9]+){1,3})',release.get('body',''))
+        self.release_base=match[1] if match else ''
+        current_base=self.config.get('client_version','')
+        newer_official=bool(self.official_version and current_base and version_tuple(self.official_version)>version_tuple(current_base))
+        newer_mod=version_tuple(version)>version_tuple(self.config['mod_version'])
+        required_base=self.official_version or current_base
+        self.waiting_for_adapter=bool(required_base) and (newer_mod or newer_official) and (not newer_mod or not self.release_base or version_tuple(self.release_base)<version_tuple(required_base))
+        if self.waiting_for_adapter:
+            self.available=None
+            atomic_json(self.policy_file,{'repository':REPO,'release':None})
             return self.status()
         if version_tuple(version) <= version_tuple(self.config['mod_version']):
             # An installed rollback must not be unlocked by a stale API response.
             if self.available:
                 return self.status()
-            return {'available':False,'message':'当前修改版 '+self.config['mod_version']+'，已是最新适配版本。'}
+            return self.status()
         asset = next((a for a in release.get('assets',[]) if a['name']=='WuwaTappo-FullAtlas-'+version+'-x64-update.zip'), None)
         sums = next((a for a in release.get('assets',[]) if a['name']=='SHA256SUMS.txt'), None)
         prefix = 'https://github.com/'+REPO+'/releases/download/'
         if not asset or not sums or not asset['browser_download_url'].startswith(prefix) or not sums['browser_download_url'].startswith(prefix):
+            self.waiting_for_adapter=newer_official
+            if newer_official:self.available=None
             if self.available:
                 return self.status()
-            return {'available':False,'message':'检测到新版本，但尚无兼容的原地升级包；当前版本保持不变。'}
+            return self.status()
         entries = self.fetch(sums['browser_download_url'],65536).decode('utf-8-sig')
         match = re.search(r'^([0-9a-fA-F]{64})\s+\*?'+re.escape(asset['name'])+r'\s*$', entries, re.M)
         if not match or not 0 < asset['size'] <= 500*1024*1024:
             raise ValueError('升级包缺少有效 SHA256 校验')
         candidate = {'version':version,'url':asset['browser_download_url'],'sha256':match[1].lower(),'size':asset['size']}
+        if self.release_base:candidate['client_version']=self.release_base
         if not self.valid_candidate(candidate):
             raise ValueError('Invalid release download destination')
         if self.available and version_tuple(self.available['version']) > version_tuple(version):
@@ -254,6 +290,8 @@ class Updater:
         try:
             if not self.available:
                 raise ValueError('请先检查更新')
+            if self.waiting_for_adapter:
+                raise ValueError('官方新版尚无对应适配包，请等待作者适配')
             updates = self.root/'.updates'
             updates.mkdir(exist_ok=True)
             folder = updates/uuid.uuid4().hex
@@ -266,24 +304,56 @@ class Updater:
             manifest = unpack(archive,folder/'stage')
             if manifest['version'] != self.available['version']:
                 raise ValueError('Release version mismatch')
+            if self.available.get('client_version') and manifest.get('client_version')!=self.available['client_version']:
+                raise ValueError('官方基底与发行说明不一致，未改动原程序')
             helper = folder/'helper'
             helper.mkdir()
             shutil.copy2(self.root/'LocalGalleryHost.exe',helper/'LocalGalleryHost.exe')
             shutil.copytree(self.root/'_internal',helper/'_internal')
             atomic_json(folder/'pending.json',{'version':manifest['version'],'id':folder.name})
-            subprocess.Popen([str(helper/'LocalGalleryHost.exe'),'--apply-update',str(self.root),str(folder/'stage')],
+            popen_independent([str(helper/'LocalGalleryHost.exe'),'--apply-update',str(self.root),str(folder/'stage')],
                              cwd=helper,creationflags=0x08000000)
             return {'restarting':True,'message':'升级包已校验。正在退出桌宠、备份并原地升级…'}
         finally:
             self.lock.release()
 
     def status(self):
-        if self.available:
-            return {'available':True,'required':True,'version':self.available['version'],
-                    'repository':REPO,'checked_at':self.checked_at,'error':self.last_error,
-                    'message':'必须更新至 '+self.available['version']+' 才能继续使用。升级保留账号、缓存和设置。'}
-        return {'available':False,'required':False,'repository':REPO,'checked_at':self.checked_at,
-                'error':self.last_error,'message':'当前修改版 '+self.config['mod_version']}
+        common={'required':False,'repository':REPO,'checked_at':self.checked_at,'error':self.last_error,
+                'official_version':self.official_version,'client_version':self.config.get('client_version',''),
+                'current_version':self.config['mod_version'],'official_checked':self.official_checked,
+                'official_error':self.official_error,'waiting_for_adapter':self.waiting_for_adapter}
+        common.update(github_version=self.github_version,github_checked=self.github_checked,github_error=self.github_error)
+        base=self.config.get('client_version','')
+        if self.official_error:
+            official_state,official_message='error','官方版本检查失败，请重试。'
+        elif not self.official_checked:
+            official_state,official_message='unchecked','尚未检查官方最新版本。'
+        elif base and version_tuple(self.official_version)>version_tuple(base):
+            official_state,official_message='newer','官方已发布新版 v'+self.official_version+'（当前基底 v'+base+'）。'
+        elif base and version_tuple(self.official_version)==version_tuple(base):
+            official_state,official_message='current','官方最新版 v'+self.official_version+'，与当前基底版本一致。'
+        else:
+            official_state,official_message='known','官方最新版本为 v'+self.official_version+'。'
+        if self.github_error:
+            mod_state,mod_message='error','修改版更新检查失败，请重试：'+self.github_error
+        elif self.waiting_for_adapter:
+            mod_state,mod_message='waiting','暂未找到适配官方 v'+self.official_version+' 的可用修改版升级包，请等待作者更新。'
+        elif self.available:
+            mod_state,mod_message='available','发现修改版 v'+self.available['version']+'，可更新。点击“一键升级”保留账号、缓存和设置。'
+        elif not self.github_checked:
+            mod_state,mod_message='unchecked','尚未检查修改版最新版本。'
+        elif version_tuple(self.github_version)==version_tuple(self.config['mod_version']):
+            mod_state,mod_message='current','修改版 v'+self.github_version+' 与当前安装版本一致，无需更新。'
+        elif version_tuple(self.github_version)>version_tuple(self.config['mod_version']):
+            mod_state,mod_message='pending','修改版已发布 v'+self.github_version+'，但升级包尚未准备完成，请等待作者更新。'
+        else:
+            mod_state,mod_message='local_newer','GitHub 最新修改版为 v'+self.github_version+'；当前安装的 v'+self.config['mod_version']+' 较新，无需更新。'
+        common.update(official_state=official_state,official_message=official_message,
+                      mod_state=mod_state,mod_message=mod_message)
+        available=bool(self.available) and not self.waiting_for_adapter
+        result={**common,'available':available,'message':official_message+' '+mod_message}
+        if available:result['version']=self.available['version']
+        return result
 
     def healthy(self, version=None):
         if version != self.config['mod_version']:
@@ -311,7 +381,7 @@ def processes(root):
 
 def launch(root):
     powershell = Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'
-    subprocess.Popen([str(powershell),'-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',str(root/'launch.ps1')],
+    popen_independent([str(powershell),'-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',str(root/'launch.ps1')],
                      cwd=root,creationflags=0x08000000)
 
 

@@ -8,6 +8,21 @@ if(-not $taskPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adminis
  exit
 }
 try{
+ # Do not pass a frozen upgrader's temporary DLL directory into native children.
+ if(-not ('WuwaTappoNativeLaunch' -as [type])){
+  Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class WuwaTappoNativeLaunch { [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool SetDllDirectoryW(string value); }'
+ }
+ if(-not [WuwaTappoNativeLaunch]::SetDllDirectoryW($null)){throw '无法初始化本机运行库搜索路径。'}
+ foreach($taskRuntimeName in @('VCRUNTIME140.dll','VCRUNTIME140_1.dll')){
+  $taskRuntimeSource=Join-Path $PSScriptRoot ('_internal\'+$taskRuntimeName)
+  $taskRuntimeTarget=Join-Path $PSScriptRoot $taskRuntimeName
+  if(-not (Test-Path -LiteralPath $taskRuntimeSource)){throw ('缺少本机运行库：'+$taskRuntimeName)}
+  if(-not (Test-Path -LiteralPath $taskRuntimeTarget)){
+   Copy-Item -LiteralPath $taskRuntimeSource -Destination $taskRuntimeTarget
+  }elseif((Get-FileHash -LiteralPath $taskRuntimeSource).Hash -ne (Get-FileHash -LiteralPath $taskRuntimeTarget).Hash){
+   Copy-Item -LiteralPath $taskRuntimeSource -Destination $taskRuntimeTarget -Force
+  }
+ }
  & (Join-Path $PSScriptRoot 'initialize.ps1')
  $taskConfig=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'local_config.json') -Raw|ConvertFrom-Json
  $taskHostExe=Join-Path $PSScriptRoot 'LocalGalleryHost.exe'

@@ -10,6 +10,7 @@ import sys
 import uuid
 from desktop_assistant import atomic_json
 from desktop_updater import apply_update, unpack
+from process_launch import popen_independent
 
 
 def locate():
@@ -46,7 +47,7 @@ def main():
     # A separate copy survives replacement of every installed executable.
     helper=folder/'Upgrade.exe'
     shutil.copy2(sys.executable,helper)
-    subprocess.Popen([str(helper),'--apply-update',str(root),str(folder/'stage')],
+    popen_independent([str(helper),'--apply-update',str(root),str(folder/'stage')],
                      cwd=folder,creationflags=0x08000000)
 
 

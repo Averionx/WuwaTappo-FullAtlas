@@ -11,6 +11,7 @@ from desktop_assistant import Assistant
 class Physical:
     allowed=True
     def quiet(self):return self.allowed
+    def typing_context(self):return {'editable':True}
 
 
 class AssistantTests(unittest.TestCase):
@@ -30,6 +31,32 @@ class AssistantTests(unittest.TestCase):
         self.assertFalse(self.call('tick')['allowed'])
         self.physical.allowed=True
         self.assertTrue(self.call('tick')['allowed'])
+    def test_emote_context_requires_setting_and_no_update_gate(self):
+        self.assertFalse(self.call('typing-context')['editable'])
+        self.call('configure',{'settings':{'auto_emote':True}})
+        self.assertTrue(self.call('typing-context')['editable'])
+        self.a.update_required=True
+        self.assertFalse(self.call('typing-context')['editable'])
+        with self.assertRaises(ValueError):self.call('configure',{'settings':{'auto_emote':1}})
+    def test_emote_setting_survives_restart(self):
+        self.call('configure',{'settings':{'auto_emote':True}})
+        restored=Assistant(self.temp.name,self.physical,lambda:self.now)
+        self.assertTrue(restored.handle('state',{})['settings']['auto_emote'])
+    def test_history_delete_stays_deleted_until_new_visit(self):
+        self.call('room',{'code':'abc','host':'owner','new_visit':True})
+        self.call('delete-room',{'code':'abc'})
+        self.assertEqual(self.call('state')['rooms'],[])
+        self.call('room',{'code':'abc','host':'renamed','new_visit':False})
+        self.assertEqual(self.call('state')['rooms'],[])
+        restored=Assistant(self.temp.name,self.physical,lambda:self.now)
+        self.assertEqual(restored.handle('room',{'code':'abc','new_visit':False})['rooms'],[])
+        self.assertEqual(restored.handle('room',{'code':'abc','new_visit':True})['rooms'][0]['code'],'abc')
+    def test_history_metadata_does_not_change_visit_time(self):
+        self.call('room',{'code':'abc','host':'owner','new_visit':True})
+        first=self.call('state')['rooms'][0]['visited'];self.now+=20
+        value=self.call('room',{'code':'abc','host':'new owner','new_visit':False})
+        self.assertEqual(value['rooms'][0]['visited'],first)
+        self.assertEqual(value['rooms'][0]['host'],'new owner')
     def test_session_reset_does_not_reset_daily(self):
         self.call('observe',{'total':100,'account':'a'})
         self.call('observe',{'total':109,'account':'a'})

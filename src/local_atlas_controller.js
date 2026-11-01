@@ -2,6 +2,9 @@
 function createLocalAtlasController(d) {
   const KEY = 'wuwatappo-local-gallery-v1';
   const CACHE_KEY='wuwatappo-local-cache-generation';
+  const PRESET_KEY='wuwatappo-local-presets-v1';
+  const readPresets=()=>{try{const rows=JSON.parse(d.storage.getItem(PRESET_KEY)||'[]');return Array.isArray(rows)?rows.slice(0,5):[];}catch{return [];}};
+  const presets=d.ref(readPresets());
   const enabled = d.ref(false), busy = d.ref(false), selection = d.ref({}), favorites = d.ref({});
   const offlineData = d.ref(null), revision = d.ref(0);
   const syncStatus = d.ref({status: 'idle', done: 0, total: 0});
@@ -172,6 +175,16 @@ function createLocalAtlasController(d) {
         is_collect: favorites.value[id] ? 1 : 0, owned: true};
     });
   }
+  function collectionProgress(rows,loading=false){
+    const all=new Set(),owned=new Set();
+    if(!loading)for(const row of Array.isArray(rows)?rows:[]){
+      if(!Number.isSafeInteger(row.asset_id)||row.asset_id<=0)continue;
+      const key=String(row.asset_type)+':'+row.asset_id;all.add(key);
+      if(row.owned===true)owned.add(key);
+    }
+    const total=all.size,collected=owned.size;
+    return {collected,total,percent:total?Math.max(0,Math.min(100,collected/total*100)):0,loading};
+  }
   function viewUser(official) {
     if (!enabled.value) return official;
     const s = selection.value;
@@ -212,6 +225,53 @@ function createLocalAtlasController(d) {
     selection.value = s; save();
   }
   function favorite(id, value) { favorites.value = {...favorites.value, [id]: Boolean(value)}; save(); }
+  function presetAsset(id,type) {
+    const meta=d.getAppearanceAssetById(id);
+    if(!Number.isSafeInteger(id)||id<=0||!meta||meta.asset_type!==type)throw new Error('预设中的素材不可用，请重新选择');
+    return {id,name:meta.file_name||meta.asset_name||meta.name||''};
+  }
+  function savePresets(rows){
+    d.storage.setItem(PRESET_KEY,JSON.stringify(rows));presets.value=rows;revision.value++;
+  }
+  function presetList(){revision.value;return JSON.parse(JSON.stringify(presets.value));}
+  function createLocalPreset(official,limit=5) {
+    if(!enabled.value)throw new Error('本地模式尚未开启');
+    const rows=readPresets();
+    if(rows.length>=Math.min(5,limit))throw new Error('本地预设已满，请先删除一个');
+    const user=viewUser(official),c=presetAsset(user.character?.id,'character_skin');
+    const a=user.accessory?presetAsset(user.accessory.id,'accessory'):null;
+    const emotes=(user.emote||[]).map(e=>presetAsset(e.id,'emote'));
+    const id=Math.min(-Date.now(),...rows.map(p=>p.preset_id-1));
+    const row={preset_id:id,character_asset_id:c.id,character_asset_name:user.character.name||c.name,
+      accessory_asset_id:a?.id||0,accessory_asset_name:user.accessory?.name||a?.name||'',
+      emotes:emotes.map((e,i)=>({asset_id:e.id,asset_name:user.emote[i].name||e.name}))};
+    savePresets([...rows,row]);return row;
+  }
+  function deleteLocalPreset(id){
+    if(!enabled.value)throw new Error('本地模式尚未开启');
+    const rows=readPresets();
+    if(!rows.some(p=>p.preset_id===id))throw new Error('本地预设不存在');
+    savePresets(rows.filter(p=>p.preset_id!==id));
+  }
+  function applyLocalPreset(id){
+    if(!enabled.value)throw new Error('本地模式尚未开启');
+    const row=readPresets().find(p=>p.preset_id===id);
+    if(!row)throw new Error('本地预设不存在');
+    const character=presetAsset(row.character_asset_id,'character_skin');
+    const accessory=row.accessory_asset_id?presetAsset(row.accessory_asset_id,'accessory'):null;
+    const emote=(row.emotes||[]).map(e=>presetAsset(e.asset_id,'emote'));
+    const role=String(d.getAppearanceAssetById(character.id)?.game_role_id||'');
+    if(emote.length>5||new Set(emote.map(e=>e.id)).size!==emote.length)throw new Error('预设表情数量异常');
+    for(const asset of [accessory,...emote].filter(Boolean)){
+      const assetRole=String(d.getAppearanceAssetById(asset.id)?.game_role_id||'');
+      if(assetRole&&assetRole!=='0'&&assetRole!==role)throw new Error('预设中的配件或表情不适用此角色');
+    }
+    character.name=row.character_asset_name||character.name;
+    if(accessory)accessory.name=row.accessory_asset_name||accessory.name;
+    emote.forEach((e,i)=>e.name=row.emotes[i].asset_name||e.name);
+    const before=selection.value;selection.value={character,accessory,emote};
+    try{save();}catch(error){selection.value=before;throw error;}
+  }
   function reorder(ids, official) {
     const list = viewUser(official).emote || [], byId = new Map(list.map(e => [e.id, e]));
     if (ids.length !== list.length || new Set(ids).size !== ids.length || ids.some(id => !byId.has(id))) return;
@@ -243,6 +303,7 @@ function createLocalAtlasController(d) {
   }, true);
   d.window.addEventListener('storage', event => {
     if(disposed)return;
+    if(event.key===PRESET_KEY){presets.value=readPresets();revision.value++;return;}
     if(event.key===CACHE_KEY){
       if(enabled.value&&d.catalogConsumer!==false)prepare(true).then(data=>{d.applyOfflineCatalog(data.catalog,origin);revision.value++;}).catch(d.onError);
       else offlineData.value=null;
@@ -286,6 +347,8 @@ function createLocalAtlasController(d) {
   }
   function dispose(){disposed=true;if(statusTimer!==null)d.window.clearInterval?.(statusTimer);}
   return {enabled, busy, selection, favorites, revision, ready, setEnabled, inventory, viewUser, select,
+    presetList,createLocalPreset,deleteLocalPreset,applyLocalPreset,
+    collectionProgress,
     favorite, reorder, prepare, offlineData, assetsHost: origin, offlineError, checkInvoke, syncStatus, syncCache, request: localRequest, dispose,
     restricted,normalCumulative:()=>d.getAccountCumulative?.()??0,normalPending:()=>d.getAccountPending?.()??0};
 }

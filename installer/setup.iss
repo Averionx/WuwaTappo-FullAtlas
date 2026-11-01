@@ -1,16 +1,16 @@
-﻿#define AppTitle "WuwaTappo全图鉴版"
+#define AppTitle "WuwaTappo全图鉴版"
 [Setup]
 AppId={{B0A64B37-C7C3-4E2F-925B-A4EBB90E92B2}
 AppName={#AppTitle}
-AppVersion=1.2
-AppVerName={#AppTitle} 1.2
+AppVersion=1.3.4
+AppVerName={#AppTitle} 1.3.4
 AppPublisher=Averionx
 AppPublisherURL=https://github.com/Averionx/WuwaTappo-FullAtlas
 AppSupportURL=https://github.com/Averionx/WuwaTappo-FullAtlas/issues
 DefaultDirName={autopf}\WuwaTappoFullAtlas
 DefaultGroupName={#AppTitle}
 OutputDir=..\dist
-OutputBaseFilename=WuwaTappo全图鉴版-1.2-Setup
+OutputBaseFilename=WuwaTappo全图鉴版-1.3.4-Setup
 Compression=lzma2/normal
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
@@ -19,7 +19,7 @@ PrivilegesRequired=admin
 WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
-UninstallDisplayName={#AppTitle} 1.2
+UninstallDisplayName={#AppTitle} 1.3.4
 InfoBeforeFile=..\docs\INSTALL_NOTES.txt
 SetupLogging=yes
 
@@ -28,7 +28,7 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "..\build\payload\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "host\*,cache\*,profile\*,local_config.json,offline_state.json,assistant_state.json,update_policy.json,.updates\*,*.log,client_diagnostics.jsonl"
+Source: "..\build\payload\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "host\*,cache\*,cache_previous_*\*,cache_staging_*\*,profile\*,local_config.json,offline_state.json,assistant_state.json,update_policy.json,.updates\*,*.log,client_diagnostics.jsonl"
 Source: "..\build\payload\cache\*"; DestDir: "{app}\cache"; Flags: onlyifdoesntexist recursesubdirs createallsubdirs
 
 [Icons]

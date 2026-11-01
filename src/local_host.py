@@ -7,6 +7,7 @@ import argparse, base64, ctypes, hashlib, json, mimetypes, subprocess, threading
 from sync_cache import sync as sync_public_cache
 from desktop_assistant import Assistant, PhysicalInput
 from desktop_updater import Updater, apply_update
+from process_lifecycle import watch_native_exit
 
 if '--apply-update' in sys.argv:
     pos = sys.argv.index('--apply-update')
@@ -284,9 +285,13 @@ def main():
         set_firewall(False)
     server = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
     print(json.dumps({'ready': READY, 'enabled': ACTUAL_OFFLINE, 'port': PORT}), flush=True)
-    server.serve_forever()
-    server.server_close()
-    ASSISTANT.save(True)
+    retiring=threading.Event()
+    threading.Thread(target=watch_native_exit,args=(ROOT,server.shutdown),kwargs={'stop_event':retiring},daemon=True).start()
+    try:server.serve_forever()
+    finally:
+        retiring.set()
+        server.server_close()
+        ASSISTANT.save(True)
 
 if __name__ == '__main__':
     main()

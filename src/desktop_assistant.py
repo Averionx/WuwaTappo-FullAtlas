@@ -1,4 +1,4 @@
-"""Local assistant state. No keyboard/mouse injection or focus APIs are used."""
+"""Local assistant state; never inject input, switch focus, or read text."""
 from pathlib import Path
 from datetime import datetime, timedelta
 import ctypes
@@ -22,6 +22,8 @@ class PhysicalInput:
         _fields_ = [('cbSize', wintypes.UINT), ('dwTime', wintypes.DWORD)]
 
     def __init__(self):
+        from text_focus import FocusedTextProbe
+        self.text_focus=FocusedTextProbe()
         self.user = ctypes.windll.user32
         self.kernel = ctypes.windll.kernel32
         self.user.GetAsyncKeyState.argtypes = [ctypes.c_int]
@@ -38,10 +40,32 @@ class PhysicalInput:
             return False
         return not any(self.user.GetAsyncKeyState(key) & 0x8000 for key in range(1, 255))
 
+    def typing_context(self):
+        class GUIINFO(ctypes.Structure):
+            _fields_=[('cbSize',wintypes.DWORD),('flags',wintypes.DWORD),
+                      *[(name,wintypes.HWND) for name in ('hwndActive','hwndFocus','hwndCapture','hwndMenuOwner','hwndMoveSize','hwndCaret')],
+                      ('rcCaret',wintypes.RECT)]
+        info=GUIINFO();info.cbSize=ctypes.sizeof(info)
+        self.user.GetForegroundWindow.restype=wintypes.HWND
+        hwnd=self.user.GetForegroundWindow()
+        if not hwnd:return {'editable':False}
+        self.user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
+        thread=self.user.GetWindowThreadProcessId(hwnd,None)
+        if not self.user.GetGUIThreadInfo(thread,ctypes.byref(info)):return {'editable':False}
+        name=ctypes.create_unicode_buffer(256)
+        self.user.GetClassNameW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int]
+        self.user.GetClassNameW(info.hwndFocus,name,len(name))
+        # Read only focus/caret metadata, never text, clipboard or keystrokes.
+        editable=bool(info.hwndCaret) or name.value.lower().startswith(('edit','richedit','scintilla'))
+        if editable:return {'editable':True,'source':'native-caret'}
+        result=self.text_focus.probe()
+        if self.user.GetForegroundWindow()!=hwnd:return {'editable':False,'source':'focus-changed'}
+        return result
+
 
 class Assistant:
     DEFAULTS = {'enabled': False, 'speed': 5, 'auto_chest': False, 'threshold': 1000,
-                'remember_monitor': True}
+                'remember_monitor': True, 'auto_emote': False}
 
     def __init__(self, root, physical=None, clock=time.time):
         self.path = Path(root) / 'assistant_state.json'
@@ -60,6 +84,7 @@ class Assistant:
                       'local': {'total': 0, 'balance': 0, 'chests': {}, 'opened': 0},
                       'baselines': {}, 'days': {}, 'rooms': [], 'monitor': None,
                       'rewards': [], 'session_chests': 0}
+        self.state['deleted_rooms']=[]
         if self.path.exists():
             saved = json.loads(self.path.read_text(encoding='utf-8'))
             self.state.update(saved)
@@ -103,6 +128,7 @@ class Assistant:
     def snapshot(self):
         value = json.loads(json.dumps(self.state))
         value.pop('baselines', None)
+        value.pop('deleted_rooms',None)
         value['weekly'] = {}
         for scope in ('local', 'normal'):
             days = value['days'].get(scope, {})
@@ -118,12 +144,19 @@ class Assistant:
 
     def handle(self, action, body, offline=False):
         with self.lock:
+            if action == 'typing-context':
+                if not self.state['settings']['auto_emote'] or self.update_required:return {'editable':False}
+                return self.physical.typing_context() if self.physical else {'editable':False}
+            if action == 'project':
+                import webbrowser
+                webbrowser.open('https://github.com/Averionx/WuwaTappo-FullAtlas')
+                return {'opened':True}
             if action == 'configure':
                 changes = body.get('settings', {})
                 if not isinstance(changes, dict) or set(changes) - self.DEFAULTS.keys():
                     raise ValueError('Unknown setting')
                 for key, val in changes.items():
-                    if key in ('enabled', 'auto_chest', 'remember_monitor') and type(val) is not bool:
+                    if key in ('enabled', 'auto_chest', 'remember_monitor', 'auto_emote') and type(val) is not bool:
                         raise ValueError('Expected boolean')
                     if key == 'speed' and (type(val) is not int or val not in (1, 5, 10)):
                         raise ValueError('Speed must be 1, 5 or 10')
@@ -144,6 +177,9 @@ class Assistant:
                     self.runtime.update(total=body['total'], balance=body.get('balance', 0),
                                         logged_in=body.get('logged_in') is True,
                                         local_atlas=bool(offline), chests=body.get('chests', {}))
+                    status=body.get('emote_status')
+                    if isinstance(status,dict):
+                        self.runtime['emote_status']={key:status[key] for key in ('physical','eligible','sent','equipped','reason') if key in status}
                 self.runtime.update(seen_at=self.clock(), connected=True)
                 sent = body.get('sent', 0)
                 confirmed = body.get('confirmed', 0)
@@ -204,20 +240,31 @@ class Assistant:
                 code = str(body.get('code', '')).strip()
                 if not re_room(code):
                     raise ValueError('Invalid room code')
+                new_visit=body.get('new_visit',True) is True
+                deleted=self.state.setdefault('deleted_rooms',[])
+                if code in deleted and not new_visit:return self.snapshot()
+                if new_visit:self.state['deleted_rooms']=[x for x in deleted if x!=code]
                 rooms = self.state['rooms']
                 old = next((r for r in rooms if r['code'] == code), None)
                 if old:
                     rooms.remove(old)
-                rooms.insert(0, {'code': code, 'host': str(body.get('host', ''))[:100],
-                                 'favorite': old.get('favorite', False) if old else False, 'visited': int(self.clock())})
-                rooms.sort(key=lambda r: not r['favorite'])
+                rooms.insert(0, {'code': code, 'host': str(body.get('host', '') or (old or {}).get('host',''))[:100],
+                                 'favorite': old.get('favorite', False) if old else False, 'visited': int(self.clock()) if new_visit or not old else old['visited']})
+                rooms.sort(key=lambda r:(not r['favorite'],-r['visited']))
                 del rooms[100:]
+                self.save(True)
+            elif action == 'delete-room':
+                code=str(body.get('code','')).strip()
+                if not re_room(code):raise ValueError('Invalid room code')
+                self.state['rooms']=[r for r in self.state['rooms'] if r['code']!=code]
+                self.state['deleted_rooms']=[x for x in self.state.setdefault('deleted_rooms',[]) if x!=code]+[code]
+                self.state['deleted_rooms']=self.state['deleted_rooms'][-100:]
                 self.save(True)
             elif action == 'favorite':
                 for room in self.state['rooms']:
                     if room['code'] == body.get('code'):
                         room['favorite'] = body.get('favorite') is True
-                self.state['rooms'].sort(key=lambda r: not r['favorite'])
+                self.state['rooms'].sort(key=lambda r:(not r['favorite'],-r['visited']))
                 self.save(True)
             elif action == 'monitor':
                 monitor = body.get('monitor')

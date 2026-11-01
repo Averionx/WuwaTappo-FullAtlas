@@ -5,7 +5,8 @@ import hashlib,json
 root=Path(__file__).resolve().parents[1]
 version=json.loads((root/'build/payload/package_config.json').read_text(encoding='utf-8-sig'))['mod_version']
 names=[f'WuwaTappo-FullAtlas-{version}-x64-update.zip',
-       f'WuwaTappo全图鉴版-{version}-原地升级.exe',f'WuwaTappo全图鉴版-{version}-Setup.exe']
+       f'WuwaTappo全图鉴版-{version}-原地升级.exe',f'WuwaTappo全图鉴版-{version}-Setup.exe',
+       f'WuwaTappo全图鉴版-{version}-绿色版.exe']
 lines=[]
 for name in names:
     with (root/'dist'/name).open('rb') as stream:

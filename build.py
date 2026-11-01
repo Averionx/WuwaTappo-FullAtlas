@@ -6,8 +6,9 @@ PROJECT=Path(__file__).resolve().parent
 SUPPORTED_BASES={
     'dd340c92a7320d1ecf3697ba65b4ad23d8f196acb547d2baf3f75ba09d696d97':'1.0.1',
     '099b62be14efe2cc99bb0ad3d37860488c42fb0f4e6282b5687e6335ab178573':'1.0.2',
+    'cedc37d0c11d112f4d933647fb6cf00e1dca847fc763250984c647080f849080':'1.0.3',
 }
-MOD_VERSION='1.2'
+MOD_VERSION='1.3.4'
 
 def copy_if_changed(source, destination):
     source, destination = Path(source), Path(destination)
@@ -47,7 +48,8 @@ def main():
     (build/'local_config.json').write_text(json.dumps(config),encoding='utf-8')
     run([sys.executable,PROJECT/'tools/build_integration.py'])
     shutil.copy2(build/'WuwaTappo.Local.v2.exe',payload/'WuwaTappo.Local.exe')
-    shutil.copytree(args.cache,payload/'cache',dirs_exist_ok=True)
+    if args.cache.resolve() != (payload/'cache').resolve():
+        shutil.copytree(args.cache,payload/'cache',dirs_exist_ok=True,copy_function=copy_if_changed)
     assert (args.runtime/'msedgewebview2.exe').is_file()
     shutil.copytree(args.runtime,payload/'runtime',dirs_exist_ok=True,copy_function=copy_if_changed)
     for name in ['README.md','LICENSE','THIRD_PARTY_NOTICES.md']:
@@ -61,6 +63,11 @@ def main():
     psutil_dist=importlib.metadata.distribution('psutil')
     psutil_license=next(p for p in psutil_dist.files if p.name=='LICENSE')
     shutil.copy2(psutil_dist.locate_file(psutil_license),licenses/'PSUTIL_LICENSE.txt')
+    from comtypes.client import GetModule
+    GetModule('UIAutomationCore.dll')
+    comtypes_dist=importlib.metadata.distribution('comtypes')
+    comtypes_license=next(p for p in comtypes_dist.files if p.name=='LICENSE.txt')
+    shutil.copy2(comtypes_dist.locate_file(comtypes_license),licenses/'COMTYPES_LICENSE.txt')
     for script in (PROJECT/'installer').glob('*.ps1'):
         # Windows PowerShell 5.1 requires a BOM for Chinese labels.
         (payload/script.name).write_text(script.read_text(encoding='utf-8-sig'),encoding='utf-8-sig')
@@ -70,6 +77,7 @@ def main():
     ssl_policy=Path(ssl.__file__).with_name('codex-rejected-cas.pem')
     if ssl_policy.is_file():ssl_data=['--add-data',str(ssl_policy)+os.pathsep+'.']
     run([sys.executable,'-m','PyInstaller','--noconfirm','--clean','--onedir','--console',*ssl_data,
+         '--hidden-import','comtypes.gen.UIAutomationClient',
          '--name','LocalGalleryHost','--distpath',build/'frozen','--workpath',build/'pyinstaller',
          '--specpath',build,'--paths',PROJECT/'src',PROJECT/'src/local_host.py'])
     run([build/'frozen/LocalGalleryHost/LocalGalleryHost.exe','--self-check'])
@@ -77,6 +85,9 @@ def main():
     # Keep the frozen service adjacent to the app; its Python DLLs stay in _internal.
     shutil.copy2(payload/'host/LocalGalleryHost.exe',payload/'LocalGalleryHost.exe')
     shutil.copytree(payload/'host/_internal',payload/'_internal',dirs_exist_ok=True)
+    # Native pet startup must not depend on an upgrader's temporary _MEI DLLs.
+    for name in ('VCRUNTIME140.dll','VCRUNTIME140_1.dll'):
+        shutil.copy2(payload/'_internal'/name,payload/name)
     if args.iscc:
         run([args.iscc,PROJECT/'installer/setup.iss'])
 

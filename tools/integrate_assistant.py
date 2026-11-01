@@ -23,10 +23,31 @@ def integrate(project, base, frontend, structure, shared, main, panel, main_name
     held_guard = re.findall(r'[\w$]+\.has\(e\)', first_guard[1])[-1]
     main = once(main, 'function '+handlers[0]+'(e) {', 'function '+handlers[0]+'(e,__assistantVirtual=false) {')
     main = once(main, first_guard[0], 'if (__assistantVirtual ? '+held_guard+' : ('+first_guard[1]+')) return;')
+    # Only the original native input listener reaches this hook. Virtual F24
+    # signals call the handler directly and can never trigger emotes.
+    native_call=handlers[0]+'(e.payload)'
+    main=once(main,native_call,native_call+'; __lg.assistant.physicalKey(e.payload)')
+    native_release=handlers[1]+'(e.payload)'
+    main=once(main,native_release,native_release+'; __lg.assistant.physicalRelease(e.payload)')
     chest = min((fn for fn in structure['files'][main_name]['functions'] if 'openChest failed' in source[fn['start']:fn['end']]), key=lambda fn:fn['end']-fn['start'])
     chest_text = source[chest['start']:chest['end']]
     cost = re.search(re.escape(store)+r'\.totalClickCount < ([\w$]+)', chest_text)[1]
     animation = re.search(r'const \w+ = ([\w$]+)\(e\);', chest_text)[1]
+    busy=re.search(r'if \(([\w$]+)\.value \|\| ([\w$]+)\.value\) return;',chest_text)
+    assert busy,'chest busy contract'
+    remaining=[]
+    for ready_name in ('Wn','Gn'):
+        remaining.append(re.search(ready_name+r' = '+re.escape(mi['computed'])+r'\(\(\) =>[^\n]+: ([\w$]+)\.value <= 0\)',source)[1])
+    emote_fn=min((fn for fn in structure['files'][main_name]['functions'] if mi['reportSendSticker']+'({' in source[fn['start']:fn['end']]),key=lambda fn:fn['end']-fn['start'])
+    emote_text=source[emote_fn['start']:emote_fn['end']]
+    assert 'e.src' in emote_text and '.push({' in emote_text,'manual emote rendering contract'
+    emote_items=re.search(r'"emote-items": ([\w$]+)\.value,\s*onSelect: '+re.escape(emote_fn['name']),source)[1]
+    emote_url=re.search(r'"asset-url": ([\w$]+),\s*"emote-items": '+re.escape(emote_items),source)[1]
+    sync_call=re.search(re.escape(store)+r'\.isLoggedIn && ([\w$]+)\(e.id\);',emote_text)
+    assert sync_call,'original room emote send contract'
+    # Local-only selections must never be sent as account-owned room items.
+    main=once(main,sync_call[0],store+'.isLoggedIn && !__lg.enabled.value && '+sync_call[1]+'(e.id);')
+    native_invoke=mi.get('invoke$1',mi.get('invoke'))
     assert 'Wn = pe(() =>' in source and 'Gn = pe(() =>' in source, 'chest readiness contract'
     # Counters, native persistence and logout remain byte-for-byte original.
     # The official installer would replace this executable and lose integrations.
@@ -61,20 +82,22 @@ localAtlasController.assistant=createDesktopAssistant({ref,window,atlas:localAtl
  account:()=>String({store}.userInfo?.cuid||{store}.userInfo?.user_id||{store}.userInfo?.uid||'guest'),
  loggedIn:()=>{store}.isLoggedIn,blocked:()=>__lg.assistant.updateRequired.value,
  press:key=>{handlers[0]}(key,true),release:{handlers[1]},chestCost:{cost},
- chests:()=>({{left:{{remaining:Math.max(0,Bt.value),ready:Wn.value}},right:{{remaining:Math.max(0,Nt.value),ready:Gn.value}},cooldown:1800000,busy:Dn.value||kt.value}}),
+ chests:()=>({{left:{{remaining:Math.max(0,{remaining[0]}.value),ready:Wn.value}},right:{{remaining:Math.max(0,{remaining[1]}.value),ready:Gn.value}},cooldown:1800000,busy:{busy[1]}.value||{busy[2]}.value}}),
+ emotes:()=>{emote_items}.value.map(item=>({{...item,src:{emote_url}('emote/'+item.name)}})),
+ sendEmote:item=>{emote_fn['name']}(item),
  monitors:__assistantMonitors,restoreMonitor:__assistantRestoreMonitor,
  currentMonitor:{mi['currentMonitor']},toast:{mi['showToast']},
  openSettings:{open_settings},
  openView:async view=>{{
    if(__lg.assistant.updateRequired.value)return;
-   await {open_tab}(view==='atlas'?'atlas':'settings');
-   const send=()=>{mi['invoke$1']}('plugin:event|emit',{{event:'local-assistant-view',payload:view}}).catch(()=>{{}});
+   await {open_tab}(view==='atlas'?'atlas':'setting');
+   const send=()=>{native_invoke}('plugin:event|emit',{{event:'local-assistant-view',payload:view}}).catch(()=>{{}});
    send();window.setTimeout(send,800);window.setTimeout(send,2200);
  }},
  quit:{quit_fn},
  persistOriginal:async()=>{{{persist_original}}},
  listenRoom:callback=>{mi['watch']}([()=>{room},()=>{members}.map(x=>[x.id,x.nickname,x.isOwner]).join('|')],()=>{{
-   const owner={members}.find(x=>x.isOwner);if({room})callback(String({room}),owner?.nickname||'').catch(()=>{{}});
+   const owner={members}.find(x=>x.isOwner);callback(String({room}||''),owner?.nickname||'').catch(()=>{{}});
  }},{{immediate:true}}),
  listenJoin:callback=>{mi['listen']}('local-assistant-join',event=>callback(String(event.payload))),
  join:async code=>{{{input_room}=code;await {join_fn}();}}
@@ -83,17 +106,35 @@ localAtlasController.assistant=createDesktopAssistant({ref,window,atlas:localAtl
     main = once(main, 'let __localSaved=null;',code+'\nlet __localSaved=null;')
     monitor_name = next(p.name for p in (base/'readable_js/assets').glob('switchDisplayMonitor-*.js'))
     monitor = (base/'readable_js/assets'/monitor_name).read_text(encoding='utf-8')
-    monitor = once(monitor, 'async function Nt() {', 'async function Nt(targetName=null) {')
-    monitor = once(monitor, 'if (u.length <= 1)', 'if (!targetName && u.length <= 1)')
-    monitor = once(monitor, 'const m = (M + 1) % u.length,', 'if(targetName && (!u.some(x=>x.name===targetName)||w?.name===targetName))return false;\n    const m = targetName ? u.findIndex(x=>x.name===targetName) : (M + 1) % u.length,')
-    monitor = once(monitor, 'async function Ht() {', 'async function Ht(targetName=null) {')
-    monitor = once(monitor, 'y = Nt();', 'y = Nt(targetName);')
+    tab_guard='return e === "bag" || e === "atlas" || e === "exchange" || e === "room" || e === "setting"'
+    monitor=once(monitor,tab_guard,tab_guard+' || e === "console"')
+    switch_match=re.search(r'const ([\w$]+) = \(([\w$]+) \+ 1\) % ([\w$]+)\.length,',monitor)
+    assert switch_match,'monitor cycle contract'
+    idx,old_idx,monitors=switch_match.groups()
+    switch_fn=list(re.finditer(r'async function ([\w$]+)\(\) \{',monitor[:switch_match.start()]))[-1][1]
+    prefix=monitor[monitor.rfind('async function ',0,switch_match.start()):switch_match.start()]
+    current_match=re.search(r'([\w$]+)\?\.name',prefix) or re.search(r'const ([\w$]+) = await [\w$]+\([^\n]+\);\s*let '+re.escape(old_idx),prefix)
+    assert current_match,'current monitor contract'
+    current=current_match[1]
+    monitor=once(monitor,'async function '+switch_fn+'() {','async function '+switch_fn+'(targetName=null) {')
+    monitor=once(monitor,f'if ({monitors}.length <= 1)',f'if (!targetName && {monitors}.length <= 1)')
+    monitor=once(monitor,switch_match[0],f'if(targetName && (!{monitors}.some(x=>x.name===targetName)||{current}?.name===targetName))return false;\n const {idx} = targetName ? {monitors}.findIndex(x=>x.name===targetName) : ({old_idx} + 1) % {monitors}.length,')
+    call=re.search(r'([\w$]+) = '+re.escape(switch_fn)+r'\(\);',monitor)
+    wrapper=list(re.finditer(r'async function ([\w$]+)\(\) \{',monitor[:call.start()]))[-1][1]
+    monitor=once(monitor,'async function '+wrapper+'() {','async function '+wrapper+'(targetName=null) {')
+    monitor=once(monitor,call[0],call[1]+' = '+switch_fn+'(targetName);')
     (frontend/'assets'/monitor_name).write_text(monitor, encoding='utf-8')
-    main = 'import {a as __assistantMonitors,n as __assistantRestoreMonitor} from "./'+monitor_name+'";\n'+main
+    export_text=monitor[monitor.rfind('export {'):]
+    exported=dict(re.findall(r'([\w$]+) as ([\w$]+)',export_text))
+    if structure['shared']=='index-CuzHFfJW.js':
+        available=re.search(r'async function ([\w$]+)\(\) \{\s*const ([\w$]+) = await [\w$]+\(\),\s*([\w$]+) = await [\w$]+\(\);\s*return [\w$]+\(\2, \3\)',monitor)[1]
+        available_export=exported[available]
+    else:
+        available_export='a'
+    main = 'import {'+available_export+' as __assistantMonitors,'+exported[wrapper]+' as __assistantRestoreMonitor} from "./'+monitor_name+'";\n'+main
     h=pi['createBaseVNode']
     row=f'''{h}('div',{{class:'setting-item','data-desktop-assistant':'true'}},[{h}('div',{{class:'setting-label'}},[{h}('div',{{class:'setting-title'}},'挂机与统计'),{h}('div',{{class:'setting-sub'}},'后台点击、自动开箱、每日统计、房间历史与版本更新')]),{h}('button',{{class:'setting-btn',type:'button',onClick:()=>__lg.assistant.openPanel()}},'打开')]),'''
-    panel = once(panel, h+"('div',{class:'setting-item','data-local-gallery-setting':'true'},[",row+'\n'+h+"('div',{class:'setting-item','data-local-gallery-setting':'true'},[")
-    assert panel.count('await ds(), await xt()') == 2, 'panel close lifecycle changed'
+    assert len(re.findall(r'await [\w$]+\(\), await [\w$]+\(\)',panel))>=2, 'panel close lifecycle changed'
     panel = once(panel,'let __panelDisposed=false;',f'''let __assistantViewUnlisten=null;
 {pi['onMounted']}(async()=>{{__assistantViewUnlisten=await {pi['listen']}('local-assistant-view',event=>{{
  const view=event.payload;

@@ -60,7 +60,7 @@ def integrate(project, base, frontend, structure, shared, main, panel, main_name
     shared = once(shared, 'window.__WUWA_LOCAL_ATLAS__ = localAtlasController;', factory + '''
 window.__WUWA_LOCAL_ATLAS__ = localAtlasController;
 localAtlasController.assistant=createDesktopAssistant({ref,window,atlas:localAtlasController,nativeWindow:()=>getCurrentWindow(),displayName:resolveAssetDisplayName});
-localAtlasController.contextMenu=createDesktopContextMenu({invoke,Channel,settings:loadDesktopCatSettings,visible:()=>petDockVisibleForMenu,labels:async()=>getNativeMenuLabels(formatShortcut((await getAppShortcuts()).togglePet)),report:details=>localAtlasController.request('/diagnostic',details)});''')
+localAtlasController.contextMenu=createDesktopContextMenu({invoke,request:(path,body)=>localAtlasController.request(path,body),settings:loadDesktopCatSettings,visible:()=>petDockVisibleForMenu,labels:async()=>getNativeMenuLabels(formatShortcut((await getAppShortcuts()).togglePet)),report:details=>localAtlasController.request('/diagnostic',details)});''')
     shared = once(shared, 'localAtlasController.ready.then(() => { localStartOnlineServices(); return bootstrap(); })',
                   'Promise.all([localAtlasController.ready,localAtlasController.assistant.ready]).then(() => { localStartOnlineServices(); return bootstrap(); })')
     # Record only the original successful server result, before its popup. The
@@ -76,7 +76,12 @@ localAtlasController.contextMenu=createDesktopContextMenu({invoke,Channel,settin
     open_tab = min((fn for fn in structure['files'][main_name]['functions'] if '[panel] open tab failed' in source[fn['start']:fn['end']]), key=lambda fn:fn['end']-fn['start'])['name']
     popup=re.search(r'await ([\w$]+)\("popup_main_dock_context_menu", \{\s*x: ([\w$]+),\s*y: ([\w$]+)\s*\}\)',main)
     assert popup,'native dock menu anchor changed'
-    main=once(main,popup[0],f'''try{{await __lg.contextMenu.popup({popup[2]},{popup[3]},{{openTab:{open_tab},openConsole:()=>__lg.assistant.openPanel()}});}}
+    popup_function=min((fn for fn in structure['files'][main_name]['functions'] if '"popup_main_dock_context_menu"' in source[fn['start']:fn['end']]),key=lambda fn:fn['end']-fn['start'])
+    popup_source=source[popup_function['start']:popup_function['end']]
+    cancel_gesture=re.search(r'finally\s*\{[\s\S]*?,\s*([\w$]+)\(\),\s*[\w$]+ && window\.setTimeout',popup_source)[1]
+    assert cancel_gesture in re.findall(r'cancelDockPointerGesture:\s*([\w$]+)',source),'dock cleanup binding changed'
+    context_actions=f"{{openTab:{open_tab},openConsole:async()=>{{await {open_tab}('console');const visible=await {native_invoke}('plugin:window|is_visible',{{label:'panel'}});await __lg.request('/diagnostic',{{kind:'context_console_open',visible}});}},before:async()=>{{await {cancel_gesture}();await {native_invoke}('set_main_swallow_mouse',{{enabled:false}});}},after:async()=>{{await {native_invoke}('set_main_swallow_mouse',{{enabled:false}});await {cancel_gesture}();}}}}"
+    main=once(main,popup[0],f'''try{{await __lg.contextMenu.popup({popup[2]},{popup[3]},{context_actions});}}
             catch(error){{console.warn('[context-menu] native extension unavailable',error);{popup[0]};}}''')
     quit_fn = re.search(r'"tray-quit", \(\) => \{\s*([\w$]+)\(\)', source)[1]
     persist_original = re.search(re.escape(mi['listenPersistClicksBeforeExit'])+r'\(async \(\) => \{\s*([\s\S]+?)\n\s*\}\)',source)[1]
@@ -89,11 +94,11 @@ localAtlasController.contextMenu=createDesktopContextMenu({invoke,Channel,settin
     panel_visible=re.search(r'([\w$]+)\.value = !0;',tab_text)[1]
     close_panel=min((fn for fn in structure['files'][main_name]['functions'] if '[panel] close failed' in source[fn['start']:fn['end']]),key=lambda fn:fn['end']-fn['start'])['name']
     code = f'''
-{mi['onMounted']}(()=>{{window.setTimeout(()=>__lg.contextMenu.initialize({{openTab:{open_tab},openConsole:()=>__lg.assistant.openPanel()}}).catch(error=>console.warn('[context-menu] initialize',error)),1500);}});
+{mi['onMounted']}(()=>{{window.setTimeout(()=>__lg.contextMenu.initialize({context_actions}).catch(error=>console.warn('[context-menu] initialize',error)),1500);}});
 {mi['onMounted']}(()=>{{window.setTimeout(()=>__lg.assistant.startMain({{
  total:()=>{store}.cumulativeClickCount,balance:()=>{store}.totalClickCount,
  account:()=>String({store}.userInfo?.cuid||{store}.userInfo?.user_id||{store}.userInfo?.uid||'guest'),
- loggedIn:()=>{store}.isLoggedIn,blocked:()=>__lg.assistant.updateRequired.value,
+ loggedIn:()=>{store}.isLoggedIn,blocked:()=>__lg.assistant.updateRequired.value||__lg.contextMenu.isOpen(),
  press:key=>{handlers[0]}(key,true),release:{handlers[1]},chestCost:{cost},
  chests:()=>({{left:{{remaining:Math.max(0,{remaining[0]}.value),ready:Wn.value}},right:{{remaining:Math.max(0,{remaining[1]}.value),ready:Gn.value}},cooldown:1800000,busy:{busy[1]}.value||{busy[2]}.value}}),
  emotes:()=>{emote_items}.value.map(item=>({{...item,src:{emote_url}('emote/'+item.name)}})),

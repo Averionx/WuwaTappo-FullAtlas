@@ -244,6 +244,11 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(length) or b'{}')
                 if not isinstance(body, dict):
                     raise ValueError('Object required')
+                if path=='/assistant/context-menu':
+                    from native_context_menu import popup
+                    result=popup(body.get('items'))
+                    with LOCK,(ROOT/'client_diagnostics.jsonl').open('a',encoding='utf-8') as stream:stream.write(json.dumps({'kind':'context_menu_action','action':result.get('action')})+'\n')
+                    return self.respond(200,result)
                 return self.respond(200, ASSISTANT.handle(path.rsplit('/', 1)[-1], body, ACTUAL_OFFLINE))
             except Exception as error:
                 return self.respond(400, {'error': str(error)})

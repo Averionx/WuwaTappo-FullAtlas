@@ -495,6 +495,20 @@ def launch(root, job=None):
                      cwd=root,creationflags=0x08000000,env=environment)
 
 
+def request_graceful_exit(root):
+    """Same authenticated save-and-quit action used by the app's exit button."""
+    try:
+        config=json.loads((Path(root)/'local_config.json').read_text(encoding='utf-8-sig'))
+        port=config['port'];token=config['token']
+        if type(port) is not int or not 1<=port<=65535 or not isinstance(token,str):return False
+    except (OSError,ValueError,KeyError):return False
+    request=urllib.request.Request('http://127.0.0.1:'+str(port)+'/assistant/quit',data=b'{}',headers={'Content-Type':'application/json','X-Local-Token':token})
+    try:
+        with urllib.request.urlopen(request,timeout=5) as response:response.read(2*1024*1024)
+        return True
+    except OSError:return False
+
+
 def apply_update(root_arg, stage_arg):
     root, stage = Path(root_arg).resolve(), Path(stage_arg).resolve()
     if not stage.is_relative_to(root/'.updates') or stage.name!='stage':
@@ -523,6 +537,7 @@ def _apply_update_locked(root,stage,folder):
     if getattr(sys,'frozen',False):
         popen_independent([sys.executable,'--update-progress',str(folder)],cwd=folder,creationflags=0x08000000)
     try:
+        request_graceful_exit(root)
         # Original exit flow persists counters. Never force-close the old app.
         deadline = time.monotonic()+60
         while processes(root):
@@ -563,7 +578,7 @@ def _apply_update_locked(root,stage,folder):
             transaction.rollback()
             launch(root,folder.name)
         else:
-            # The old application may still be open, but its host already exited.
-            launch(root,folder.name)
+            from process_lifecycle import native_is_running
+            if native_is_running(root) is False:launch(root,folder.name)
         atomic_json(folder/'result.json',{'ok':False,'error':str(error)})
         report('failed',0,'更新失败：'+str(error)+'。已保留或恢复旧版本，请重试。')

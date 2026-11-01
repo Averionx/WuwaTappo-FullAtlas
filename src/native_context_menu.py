@@ -5,6 +5,9 @@ import os
 import threading
 
 _popup_lock=threading.Lock()
+WM_CANCELMODE=0x001f
+MOUSE_BUTTONS=(1,2,4)
+ENUM_WINDOWS=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM) if os.name=='nt' else None
 ALLOWED={'bag','atlas','exchange','room','console','setting','drag','game','hide','restart','quit'}|{'opacity-'+str(n) for n in (25,50,75,100)}|{'scale-'+str(n) for n in (50,75,100,125,150,175,200)}
 
 
@@ -39,12 +42,64 @@ class WindowsPopup:
             'GetCursorPos':([ctypes.POINTER(wintypes.POINT)],wintypes.BOOL),
             'TrackPopupMenuEx':([wintypes.HMENU,wintypes.UINT,ctypes.c_int,ctypes.c_int,wintypes.HWND,wintypes.LPVOID],wintypes.UINT),
             'PostMessageW':([wintypes.HWND,wintypes.UINT,wintypes.WPARAM,wintypes.LPARAM],wintypes.BOOL),
+            'GetAsyncKeyState':([ctypes.c_int],ctypes.c_short),
+            'GetWindowThreadProcessId':([wintypes.HWND,ctypes.POINTER(wintypes.DWORD)],wintypes.DWORD),
+            'EnumThreadWindows':([wintypes.DWORD,ENUM_WINDOWS,wintypes.LPARAM],wintypes.BOOL),
+            'GetClassNameW':([wintypes.HWND,wintypes.LPWSTR,ctypes.c_int],ctypes.c_int),
+            'GetWindowRect':([wintypes.HWND,ctypes.POINTER(wintypes.RECT)],wintypes.BOOL),
+            'IsWindowVisible':([wintypes.HWND],wintypes.BOOL),
         }
         for name,(args,result) in signatures.items():
             function=getattr(self.api,name);function.argtypes=args;function.restype=result
 
+    def menu_rectangles(self,thread_id):
+        rectangles=[]
+        @ENUM_WINDOWS
+        def visit(window,_):
+            name=ctypes.create_unicode_buffer(64)
+            self.api.GetClassNameW(window,name,len(name))
+            if name.value=='#32768' and self.api.IsWindowVisible(window):
+                rect=wintypes.RECT()
+                if self.api.GetWindowRect(window,ctypes.byref(rect)):
+                    rectangles.append((rect.left,rect.top,rect.right,rect.bottom))
+            return True
+        self.api.EnumThreadWindows(thread_id,visit,0)
+        return rectangles
+
+    def watch_dismissal(self,owner,thread_id,previous,stop):
+        # A background host may not become foreground. In that case Windows
+        # doesn't reliably dismiss TrackPopupMenu on outside clicks. Observe
+        # physical state only, and cancel only this owner's menu. Never consume,
+        # replay or modify input, or attach another app's input queue.
+        buttons={key:bool(self.api.GetAsyncKeyState(key)&0x8000) for key in MOUSE_BUTTONS}
+        escape=bool(self.api.GetAsyncKeyState(0x1b)&0x8000)
+        try:
+            while not stop.wait(.015):
+                foreground=self.api.GetForegroundWindow()
+                cancel=bool(foreground and foreground not in (previous,owner))
+                key_state=self.api.GetAsyncKeyState(0x1b)
+                pressed=bool(key_state&0x8000)
+                cancel|=(pressed and not escape) or bool(key_state&1)
+                escape=pressed
+                clicked=False
+                for key in MOUSE_BUTTONS:
+                    key_state=self.api.GetAsyncKeyState(key);pressed=bool(key_state&0x8000)
+                    clicked|=(pressed and not buttons[key]) or bool(key_state&1)
+                    buttons[key]=pressed
+                if clicked:
+                    rectangles=self.menu_rectangles(thread_id)
+                    point=wintypes.POINT()
+                    if rectangles and self.api.GetCursorPos(ctypes.byref(point)):
+                        cancel|=not any(left<=point.x<right and top<=point.y<bottom for left,top,right,bottom in rectangles)
+                if cancel:
+                    self.api.PostMessageW(owner,WM_CANCELMODE,0,0)
+                    return
+        except Exception:
+            # Fail closed without leaving a menu waiting for inaccessible input.
+            self.api.PostMessageW(owner,WM_CANCELMODE,0,0)
+
     def show(self,items):
-        commands={};next_id=1;menus=[];roots=set();owner=None
+        commands={};next_id=1;menus=[];roots=set();owner=None;watcher=None;stop=threading.Event()
         def build(entries):
             nonlocal next_id
             menu=self.api.CreatePopupMenu()
@@ -64,17 +119,21 @@ class WindowsPopup:
         previous=self.api.GetForegroundWindow()
         try:
             menu=build(items)
-            # Only our own zero-sized tool window is activated. No cursor
-            # clipping, pointer movement, hooks or synthetic input are used.
+            # Only our own zero-sized tool window is activated.
             owner=self.api.CreateWindowExW(0x80,'STATIC','WuwaTappo context menu',0x80000000,0,0,0,0,None,None,None,None)
             if not owner:raise ctypes.WinError(ctypes.get_last_error())
             self.api.ShowWindow(owner,5);self.api.SetForegroundWindow(owner)
             point=wintypes.POINT()
             if not self.api.GetCursorPos(ctypes.byref(point)):raise ctypes.WinError(ctypes.get_last_error())
+            thread_id=self.api.GetWindowThreadProcessId(owner,None)
+            watcher=threading.Thread(target=self.watch_dismissal,args=(owner,thread_id,previous,stop),daemon=True)
+            watcher.start()
             selected=self.api.TrackPopupMenuEx(menu,0x100|0x80|0x2,point.x,point.y,owner,None)
             self.api.PostMessageW(owner,0,0,0)
             return commands.get(selected)
         finally:
+            stop.set()
+            if watcher:watcher.join(timeout=1)
             if owner:
                 if self.api.GetForegroundWindow()==owner and previous:self.api.SetForegroundWindow(previous)
                 self.api.DestroyWindow(owner)

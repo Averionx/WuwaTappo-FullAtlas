@@ -80,6 +80,11 @@ localAtlasController.contextMenu=createDesktopContextMenu({invoke,request:(path,
     popup_source=source[popup_function['start']:popup_function['end']]
     cancel_gesture=re.search(r'finally\s*\{[\s\S]*?,\s*([\w$]+)\(\),\s*[\w$]+ && window\.setTimeout',popup_source)[1]
     assert cancel_gesture in re.findall(r'cancelDockPointerGesture:\s*([\w$]+)',source),'dock cleanup binding changed'
+    swallow_function=min((fn for fn in structure['files'][main_name]['functions'] if '"set_main_swallow_mouse"' in source[fn['start']:fn['end']]),key=lambda fn:fn['end']-fn['start'])
+    swallow_source=source[swallow_function['start']:swallow_function['end']]
+    swallow_header=re.search(r'function ([\w$]+)\(([\w$]+)\) \{',swallow_source)
+    assert swallow_header,'mouse interception binding changed'
+    main=once(main,swallow_header[0],swallow_header[0]+'\n if(__lg.contextMenu?.isOpen()) '+swallow_header[2]+'=false;')
     context_actions=f"{{openTab:{open_tab},openConsole:async()=>{{await {open_tab}('console');const visible=await {native_invoke}('plugin:window|is_visible',{{label:'panel'}});await __lg.request('/diagnostic',{{kind:'context_console_open',visible}});}},before:async()=>{{await {cancel_gesture}();await {native_invoke}('set_main_swallow_mouse',{{enabled:false}});}},after:async()=>{{await {native_invoke}('set_main_swallow_mouse',{{enabled:false}});await {cancel_gesture}();}}}}"
     main=once(main,popup[0],f'''try{{await __lg.contextMenu.popup({popup[2]},{popup[3]},{context_actions});}}
             catch(error){{console.warn('[context-menu] native extension unavailable',error);{popup[0]};}}''')

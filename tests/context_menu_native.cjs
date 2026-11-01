@@ -28,5 +28,10 @@ const context=vm.createContext({console});vm.runInContext(fs.readFileSync(__dirn
  const bindings=vm.runInContext('('+generated.slice(call.arguments[2].start,call.arguments[2].end)+')',actual);
  await bindings.before();await bindings.after();await bindings.openConsole();
  assert.equal(effects.filter(x=>x==='release-gesture').length,2);assert(effects.includes('open-console'));assert(effects.some(x=>x?.kind==='context_console_open'&&x.visible===true));
+ const swallow=nodes.find(n=>n.type==='FunctionDeclaration'&&n.id.name==='In');assert(swallow);
+ actual.__lg.contextMenu={isOpen:()=>true};actual.console={warn:()=>{}};actual.me=()=>{};actual.le=()=>{};
+ vm.runInContext(generated.slice(swallow.start,swallow.end),actual);
+ let interception;actual.Ct=async(name,args)=>{interception=args.enabled;};actual.In(true);assert.equal(interception,false);
+ actual.__lg.contextMenu.isOpen=()=>false;actual.In(true);assert.equal(interception,true);
  console.log('native menu regression passed: no shared Tauri channel, waits for dismissal, cleanup precedes direct console dispatch, repeated selection/cancel/error recover');
 })().catch(error=>{console.error(error);process.exitCode=1;});

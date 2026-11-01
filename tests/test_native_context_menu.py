@@ -3,7 +3,7 @@ import ctypes
 from ctypes import wintypes
 import sys,threading,unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
-from native_context_menu import WindowsPopup,popup,validate_items
+from native_context_menu import WindowsPopup,popup,validate_items,WM_CANCELMODE
 
 
 class FakeAPI:
@@ -14,6 +14,8 @@ class FakeAPI:
     def SetForegroundWindow(self,owner):self.foreground=owner;self.events.append(('foreground',owner));return True
     def CreateWindowExW(self,*args):return 500
     def ShowWindow(self,*args):return True
+    def GetWindowThreadProcessId(self,*args):return 123
+    def GetAsyncKeyState(self,*args):return 0
     def GetCursorPos(self,value):
         point=ctypes.cast(value,ctypes.POINTER(wintypes.POINT)).contents;point.x=100;point.y=200;return True
     def TrackPopupMenuEx(self,*args):self.events.append(('track',args));return self.selection
@@ -52,5 +54,35 @@ class NativeMenuTests(unittest.TestCase):
         result=[];thread=threading.Thread(target=lambda:result.append(popup(self.model(),implementation=Blocking())))
         thread.start();self.assertTrue(entered.wait(1));self.assertTrue(popup(self.model(),implementation=Blocking())['busy']);release.set();thread.join(2)
         self.assertEqual(result,[{'action':'console'}])
+
+    def watch(self,*,point=(500,500),rectangles=((0,0,100,100),),escape=False,foreground=7,opening=False):
+        api=FakeAPI();api.foreground=foreground;posted=[];samples={};iterations=[0]
+        def key_state(key):
+            samples[key]=samples.get(key,0)+1
+            if key==(0x1b if escape else 1):return 0x8000 if opening or samples[key]>1 else 0
+            return 0
+        api.GetAsyncKeyState=key_state
+        def cursor(value):
+            p=ctypes.cast(value,ctypes.POINTER(wintypes.POINT)).contents;p.x,p.y=point;return True
+        api.GetCursorPos=cursor;api.PostMessageW=lambda *args:posted.append(args)
+        instance=self.instance(api);instance.menu_rectangles=lambda _:rectangles
+        class Stop:
+            def wait(self,_):iterations[0]+=1;return iterations[0]>2
+        instance.watch_dismissal(500,123,7,Stop())
+        return posted
+
+    def test_outside_click_cancels_only_own_menu_when_foreground_was_denied(self):
+        self.assertEqual(self.watch(),[(500,WM_CANCELMODE,0,0)])
+
+    def test_click_inside_parent_or_submenu_is_not_cancelled(self):
+        self.assertEqual(self.watch(point=(50,50)),[])
+        self.assertEqual(self.watch(point=(150,50),rectangles=((0,0,100,100),(100,0,200,100))),[])
+
+    def test_escape_and_new_foreground_cancel_menu(self):
+        self.assertEqual(self.watch(escape=True),[(500,WM_CANCELMODE,0,0)])
+        self.assertEqual(self.watch(foreground=999),[(500,WM_CANCELMODE,0,0)])
+
+    def test_original_opening_button_is_not_mistaken_for_new_click(self):
+        self.assertEqual(self.watch(opening=True),[])
 
 if __name__=='__main__':unittest.main()

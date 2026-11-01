@@ -8,7 +8,7 @@ SUPPORTED_BASES={
     '099b62be14efe2cc99bb0ad3d37860488c42fb0f4e6282b5687e6335ab178573':'1.0.2',
     'cedc37d0c11d112f4d933647fb6cf00e1dca847fc763250984c647080f849080':'1.0.3',
 }
-MOD_VERSION='1.3.5'
+MOD_VERSION='1.3.6'
 
 def copy_if_changed(source, destination):
     source, destination = Path(source), Path(destination)
@@ -47,6 +47,7 @@ def main():
     config={'port':43229,'asset_count':len(manifest['records']),'atlas_count':len(atlas),'client_version':SUPPORTED_BASES[digest],'mod_version':MOD_VERSION}
     (build/'local_config.json').write_text(json.dumps(config),encoding='utf-8')
     run([sys.executable,PROJECT/'tools/build_integration.py'])
+    run([sys.executable,PROJECT/'tools/prepare_progress_fonts.py'])
     shutil.copy2(build/'WuwaTappo.Local.v2.exe',payload/'WuwaTappo.Local.exe')
     if args.cache.resolve() != (payload/'cache').resolve():
         shutil.copytree(args.cache,payload/'cache',dirs_exist_ok=True,copy_function=copy_if_changed)
@@ -56,6 +57,7 @@ def main():
         shutil.copy2(PROJECT/name,payload/name)
     shutil.copytree(PROJECT/'docs',payload/'docs',dirs_exist_ok=True)
     licenses=payload/'licenses';licenses.mkdir(exist_ok=True)
+    for notice in (PROJECT/'licenses').glob('*.txt'):shutil.copy2(notice,licenses/notice.name)
     shutil.copy2(Path(sys.base_prefix)/'LICENSE.txt',licenses/'PYTHON_LICENSE.txt')
     import importlib.metadata
     pyinstaller_license=next(p for p in importlib.metadata.distribution('PyInstaller').files if p.name=='COPYING.txt')
@@ -77,6 +79,7 @@ def main():
     ssl_policy=Path(ssl.__file__).with_name('codex-rejected-cas.pem')
     if ssl_policy.is_file():ssl_data=['--add-data',str(ssl_policy)+os.pathsep+'.']
     run([sys.executable,'-m','PyInstaller','--noconfirm','--clean','--onedir','--console',*ssl_data,
+         '--add-data',str(build/'ui_fonts')+os.pathsep+'ui_fonts',
          '--hidden-import','comtypes.gen.UIAutomationClient',
          '--name','LocalGalleryHost','--distpath',build/'frozen','--workpath',build/'pyinstaller',
          '--specpath',build,'--paths',PROJECT/'src',PROJECT/'src/local_host.py'])

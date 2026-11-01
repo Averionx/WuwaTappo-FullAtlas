@@ -7,7 +7,7 @@ import unittest
 import zipfile
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
-from desktop_updater import FileTransaction, unpack, safe_name, validate_manifest, apply_update, Updater
+from desktop_updater import FileTransaction, unpack, safe_name, validate_manifest, apply_update, Updater, ReleaseNotesParser, release_notes_text
 
 
 class UpdaterTests(unittest.TestCase):
@@ -60,6 +60,40 @@ class UpdaterTests(unittest.TestCase):
         with patch.object(updater,'fetch',side_effect=OSError('API quota')),patch.object(updater,'public_release',return_value={'tag_name':'v1.0','assets':[]}) as fallback:
             self.assertFalse(updater.check()['available'])
             fallback.assert_called_once()
+    def test_public_notes_recover_adapter_after_api_rate_limit(self):
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+        updater=Updater(self.root,{'mod_version':'1.1','client_version':'1.0.3'})
+        html=b'<meta name="description" content="About"><div class="markdown-body tmp-my-3"><p>\xe9\x80\x82\xe9\x85\x8d\xe5\xae\x98\xe6\x96\xb9 <strong>1.0.3</strong></p><div>notes</div></div>'
+        page=SimpleNamespace(geturl=lambda:'https://github.com/Averionx/WuwaTappo-FullAtlas/releases/tag/v1.2',read=lambda limit:html)
+        head=SimpleNamespace(headers={'Content-Length':'1234'})
+        sums=('a'*64+'  WuwaTappo-FullAtlas-1.2-x64-update.zip\n').encode()
+        with patch.object(updater,'fetch',side_effect=[OSError('API rate limit'),sums]),patch('desktop_updater.urllib.request.urlopen',side_effect=[nullcontext(page),nullcontext(head)]):
+            result=updater.check()
+        self.assertTrue(result['available']);self.assertTrue(result['required'])
+        self.assertFalse(result['waiting_for_adapter'])
+        self.assertEqual(updater.available['client_version'],'1.0.3')
+        self.assertIn('1.0.3',result['release_notes'])
+        self.assertEqual(Updater(self.root,{'mod_version':'1.1','client_version':'1.0.3'}).status()['release_notes'],result['release_notes'])
+    def test_release_notes_show_changes_not_download_table(self):
+        notes=release_notes_text('适配官方 **1.0.3**\n\n- 修复启动\n- **修复更新**\n\n### 下载\n| [Setup](https://example.invalid) |')
+        self.assertIn('• 修复启动',notes);self.assertIn('• 修复更新',notes)
+        self.assertNotIn('**',notes);self.assertNotIn('example.invalid',notes)
+    def test_public_page_without_notes_is_error_not_waiting(self):
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+        updater=Updater(self.root,{'mod_version':'1.1','client_version':'1.0.3'})
+        page=SimpleNamespace(geturl=lambda:'https://github.com/Averionx/WuwaTappo-FullAtlas/releases/tag/v1.2',read=lambda limit:b'<meta name="description" content="1.0.3">')
+        with patch.object(updater,'fetch',side_effect=OSError('API rate limit')),patch('desktop_updater.urllib.request.urlopen',return_value=nullcontext(page)):
+            value=updater.check()
+        self.assertEqual(value['mod_state'],'error');self.assertFalse(value['waiting_for_adapter']);self.assertIn('更新说明',value['error'])
+    def test_public_notes_do_not_use_about_or_an_unclosed_fragment(self):
+        for html in ['<meta name="description" content="适配官方 9.9"><p>适配官方 9.9</p>',
+                     '<div class="markdown-body">适配官方 9.9']:
+            parser=ReleaseNotesParser();parser.feed(html);parser.close()
+            self.assertEqual(parser.text(),'')
+        parser=ReleaseNotesParser();parser.feed('<div class="markdown-body"><p>适配官方 <strong>1.0.3</strong></p></div><div>适配官方 9.9</div>')
+        self.assertNotIn('9.9',parser.text());self.assertIn('1.0.3',parser.text())
     def release(self, draft=False, prerelease=False, complete=True):
         base='https://github.com/Averionx/WuwaTappo-FullAtlas/releases/download/v1.2/'
         name='WuwaTappo-FullAtlas-1.2-x64-update.zip'
@@ -185,7 +219,7 @@ class UpdaterTests(unittest.TestCase):
         return target,folder,stage
     def test_helper_health_ack_cleans_backup(self):
         target,folder,stage=self.helper_fixture()
-        with patch('desktop_updater.processes',return_value=[]),patch('desktop_updater.launch',side_effect=lambda root:(folder/'healthy').write_text('1.1')):
+        with patch('desktop_updater.processes',return_value=[]),patch('desktop_updater.launch',side_effect=lambda root,job:(folder/'healthy').write_text('1.1')):
             apply_update(target,stage)
         self.assertTrue(json.loads((folder/'result.json').read_text())['ok'])
         self.assertFalse((folder/'backup').exists())
@@ -193,8 +227,9 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual((target/'local_config.json').read_text(),'private')
     def test_helper_startup_timeout_restores_old_executable(self):
         target,folder,stage=self.helper_fixture()
-        with patch('desktop_updater.processes',return_value=[]),patch('desktop_updater.launch') as launch,patch('psutil.wait_procs',return_value=([],[])),patch('desktop_updater.time.monotonic',side_effect=[0,0,91]):
-            apply_update(target,stage)
+        with patch('desktop_updater.processes',return_value=[]),patch('desktop_updater.launch') as launch,patch('psutil.wait_procs',return_value=([],[])):
+            health_times=iter([0,91])
+            with patch('desktop_updater.time.monotonic',side_effect=lambda:next(health_times,91) if launch.called else 0):apply_update(target,stage)
         self.assertFalse(json.loads((folder/'result.json').read_text())['ok'])
         self.assertEqual((target/'WuwaTappo.Local.exe').read_bytes(),b'old-pet')
         self.assertEqual(launch.call_count,2)

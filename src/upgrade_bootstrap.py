@@ -11,6 +11,7 @@ import uuid
 from desktop_assistant import atomic_json
 from desktop_updater import apply_update, unpack
 from process_launch import popen_independent
+from update_progress import UpdateLease,read_progress,write_progress,TERMINAL
 
 
 def locate():
@@ -29,6 +30,10 @@ def locate():
 
 
 def main():
+    if '--update-progress' in sys.argv:
+        from update_progress import progress_window
+        progress_window(sys.argv[sys.argv.index('--update-progress')+1])
+        return
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target',type=Path)
     parser.add_argument('--apply-update',nargs=2)
@@ -40,15 +45,22 @@ def main():
     if not all((root/name).is_file() for name in ('WuwaTappo.Local.exe','LocalGalleryHost.exe','local_config.json','launch.ps1')):
         raise ValueError('目标不是已安装的全图鉴版，未改动文件。')
     archive=Path(getattr(sys,'_MEIPASS',Path(__file__).parent))/'upgrade-payload.zip'
-    folder=root/'.updates'/uuid.uuid4().hex
-    folder.mkdir(parents=True)
-    manifest=unpack(archive,folder/'stage')
-    atomic_json(folder/'pending.json',{'version':manifest['version'],'id':folder.name})
-    # A separate copy survives replacement of every installed executable.
-    helper=folder/'Upgrade.exe'
-    shutil.copy2(sys.executable,helper)
-    popen_independent([str(helper),'--apply-update',str(root),str(folder/'stage')],
-                     cwd=folder,creationflags=0x08000000)
+    with UpdateLease(root):
+        existing=read_progress(root)
+        if existing and existing['phase'] not in TERMINAL:return
+        folder=root/'.updates'/uuid.uuid4().hex
+        folder.mkdir(parents=True)
+        manifest=unpack(archive,folder/'stage')
+        installed=json.loads((root/'local_config.json').read_text(encoding='utf-8-sig'))
+        atomic_json(folder/'pending.json',{'version':manifest['version'],'from_version':installed.get('mod_version','—'),'id':folder.name})
+        # The launcher and the app must see the standalone install as the same
+        # active job, rather than a completed job left by a previous update.
+        atomic_json(root/'.updates/install-current.json',{'job':folder.name,'version':manifest['version']})
+        helper=folder/'Upgrade.exe'
+        shutil.copy2(sys.executable,helper)
+        process=popen_independent([str(helper),'--apply-update',str(root),str(folder/'stage')],
+                                 cwd=folder,creationflags=0x08000000)
+        write_progress(folder,'queued',70,'升级包已准备好，正在启动安装…',pid=process.pid)
 
 
 if __name__=='__main__':

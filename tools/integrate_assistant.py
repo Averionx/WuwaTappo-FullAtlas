@@ -56,10 +56,11 @@ def integrate(project, base, frontend, structure, shared, main, panel, main_name
     shared = once(shared, 'function schedulePreloadAppUiImages() {', '''function schedulePreloadAppUiImages() {
  const route=(window.location.hash||'#/').slice(1).split('?')[0];
  if(!['/','/panel'].includes(route))return;''')
-    factory = (project / 'src/assistant_dashboard.js').read_text(encoding='utf-8')+'\n'+(project / 'src/desktop_assistant.js').read_text(encoding='utf-8')
+    factory = (project / 'src/assistant_dashboard.js').read_text(encoding='utf-8')+'\n'+(project / 'src/desktop_assistant.js').read_text(encoding='utf-8')+'\n'+(project/'src/desktop_context_menu.js').read_text(encoding='utf-8')
     shared = once(shared, 'window.__WUWA_LOCAL_ATLAS__ = localAtlasController;', factory + '''
 window.__WUWA_LOCAL_ATLAS__ = localAtlasController;
-localAtlasController.assistant=createDesktopAssistant({ref,window,atlas:localAtlasController,nativeWindow:()=>getCurrentWindow(),displayName:resolveAssetDisplayName});''')
+localAtlasController.assistant=createDesktopAssistant({ref,window,atlas:localAtlasController,nativeWindow:()=>getCurrentWindow(),displayName:resolveAssetDisplayName});
+localAtlasController.contextMenu=createDesktopContextMenu({invoke,Channel,settings:loadDesktopCatSettings,visible:()=>petDockVisibleForMenu,labels:async()=>getNativeMenuLabels(formatShortcut((await getAppShortcuts()).togglePet)),report:details=>localAtlasController.request('/diagnostic',details)});''')
     shared = once(shared, 'localAtlasController.ready.then(() => { localStartOnlineServices(); return bootstrap(); })',
                   'Promise.all([localAtlasController.ready,localAtlasController.assistant.ready]).then(() => { localStartOnlineServices(); return bootstrap(); })')
     # Record only the original successful server result, before its popup. The
@@ -73,6 +74,10 @@ localAtlasController.assistant=createDesktopAssistant({ref,window,atlas:localAtl
     join_fn = structure['files'][main_name]['cases']['join-room']
     open_settings = re.search(r'class: "settings-btn"[\s\S]{0,300}?onClick: '+re.escape(mi['withModifiers'])+r'\(([\w$]+),',source)[1]
     open_tab = min((fn for fn in structure['files'][main_name]['functions'] if '[panel] open tab failed' in source[fn['start']:fn['end']]), key=lambda fn:fn['end']-fn['start'])['name']
+    popup=re.search(r'await ([\w$]+)\("popup_main_dock_context_menu", \{\s*x: ([\w$]+),\s*y: ([\w$]+)\s*\}\)',main)
+    assert popup,'native dock menu anchor changed'
+    main=once(main,popup[0],f'''try{{await __lg.contextMenu.popup({popup[2]},{popup[3]},{{openTab:{open_tab},openConsole:()=>__lg.assistant.openPanel()}});}}
+            catch(error){{console.warn('[context-menu] native extension unavailable',error);{popup[0]};}}''')
     quit_fn = re.search(r'"tray-quit", \(\) => \{\s*([\w$]+)\(\)', source)[1]
     persist_original = re.search(re.escape(mi['listenPersistClicksBeforeExit'])+r'\(async \(\) => \{\s*([\s\S]+?)\n\s*\}\)',source)[1]
     main = once(main, 'async function '+quit_fn+'() {', 'async function '+quit_fn+'() {\n try{await __lg.assistant.flush();}catch{}')
@@ -84,6 +89,7 @@ localAtlasController.assistant=createDesktopAssistant({ref,window,atlas:localAtl
     panel_visible=re.search(r'([\w$]+)\.value = !0;',tab_text)[1]
     close_panel=min((fn for fn in structure['files'][main_name]['functions'] if '[panel] close failed' in source[fn['start']:fn['end']]),key=lambda fn:fn['end']-fn['start'])['name']
     code = f'''
+{mi['onMounted']}(()=>{{window.setTimeout(()=>__lg.contextMenu.initialize({{openTab:{open_tab},openConsole:()=>__lg.assistant.openPanel()}}).catch(error=>console.warn('[context-menu] initialize',error)),1500);}});
 {mi['onMounted']}(()=>{{window.setTimeout(()=>__lg.assistant.startMain({{
  total:()=>{store}.cumulativeClickCount,balance:()=>{store}.totalClickCount,
  account:()=>String({store}.userInfo?.cuid||{store}.userInfo?.user_id||{store}.userInfo?.uid||'guest'),

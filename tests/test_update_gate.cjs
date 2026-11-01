@@ -16,10 +16,11 @@ const turns=async()=>{for(let i=0;i<25;i++)await Promise.resolve();};
 (async()=>{
  const document=dom(),window={document},context=vm.createContext({window,console});vm.runInContext(source,context);
  let installs=0,exits=0;
- const required={required:true,available:true,current_version:'1.3.5',version:'1.3.6'};
+ const required={required:true,available:true,current_version:'1.3.5',version:'1.3.6',release_notes:'• 修复开机启动\n• 修复版本检查\n<img src=x onerror=alert(1)>'};
  const gate=context.createAssistantUpdateGate({window,result:required,install:async()=>{installs++;throw Error('network offline');},retry:async()=>required,quit:()=>exits++});
  const button=text=>walk(document.body).find(n=>n.tagName==='button'&&n.textContent===text);
  assert.equal(document.body.children[0].attrs.role,'dialog');
+ assert(document.body.textContent.includes(required.release_notes));assert.equal(walk(document.body).filter(n=>n.tagName==='img').length,0);
  assert.equal(button('关闭预览'),undefined);assert.equal(button('重新检查'),undefined);assert.equal(walk(document.body).filter(n=>n.tagName==='button').length,2);assert(!button('立即更新').disabled);
  await button('立即更新').onclick();assert.equal(installs,1);assert(document.body.textContent.includes('原程序与数据保留'));assert(!button('重试更新').disabled);
  await button('退出软件').onclick();assert.equal(exits,1);
@@ -27,19 +28,33 @@ const turns=async()=>{for(let i=0;i<25;i++)await Promise.resolve();};
  await button('重试更新').onclick();assert.equal(installs,1);
  gate.close();assert.equal(document.body.children.length,0);
 
- const nativeCalls=[],events={},nativeDoc=dom(),nativeWindow={document:nativeDoc,addEventListener:(type,fn)=>events[type]=fn,removeEventListener:type=>delete events[type]};
- let closeHandler,moveHandler;
+ const progressDoc=dom(),progressGate=context.createAssistantUpdateGate({window:{document:progressDoc},result:required,install:async()=>({started:true}),quit:()=>{}});
+ const progressState={...required,installation:{version:required.version,phase:'downloading',percent:25,completed:1048576,total:4194304,message:'正在下载…'}};
+ progressGate.update(progressState);
+ const bar=walk(progressDoc.body).find(n=>n.attrs.role==='progressbar'),fill=bar.children[0];
+ assert.equal(fill.style.width,'25%');assert(progressDoc.body.textContent.includes('1.0 / 4.0 MB'));
+ progressGate.update({...progressState,installation:{...progressState.installation,phase:'installing',percent:90}});assert.equal(fill.style.width,'90%');
+ progressGate.update({...progressState,installation:{...progressState.installation,phase:'failed',message:'下载中断'}});
+ assert(walk(progressDoc.body).some(n=>n.tagName==='button'&&n.textContent==='重试更新'&&!n.disabled));
+ progressGate.update({...required,installation:{version:'1.0',phase:'complete',percent:100,message:'earlier completed update'}});
+ assert(walk(progressDoc.body).find(n=>n.className==='wt-update-progress').hidden);progressGate.close();
+
+ const nativeCalls=[],events={},topTimers=new Map(),nativeDoc=dom(),nativeWindow={document:nativeDoc,addEventListener:(type,fn)=>events[type]=fn,removeEventListener:type=>delete events[type],setInterval:(fn,ms)=>{assert.equal(ms,500);topTimers.set(1,fn);return 1;},clearInterval:id=>topTimers.delete(id)};
+ let closeHandler,moveHandler,focusHandler,topmost=false;
  const native={outerPosition:async()=>({type:'Physical',x:100,y:200}),
-  onCloseRequested:async fn=>{closeHandler=fn;return()=>{};},onMoved:async fn=>{moveHandler=fn;return()=>{};}};
+  onCloseRequested:async fn=>{closeHandler=fn;return()=>{};},onMoved:async fn=>{moveHandler=fn;return()=>{};},onFocusChanged:async fn=>{focusHandler=fn;return()=>{};}};
  for(const name of ['setClosable','setMinimizable','setMaximizable','setAlwaysOnTop','setDecorations','setMaxSize','setMinSize','setSize','setResizable','center','setPosition'])native[name]=async value=>nativeCalls.push([name,value]);
+ native.setAlwaysOnTop=async value=>{nativeCalls.push(['setAlwaysOnTop',value]);topmost=value;};
  const fixedGate=context.createAssistantUpdateGate({window:nativeWindow,result:required,nativeWindow:()=>native,install:async()=>{},quit:()=>{}});
  await fixedGate.nativeReady;
  assert(nativeCalls.some(([name,value])=>name==='setAlwaysOnTop'&&value===true));
  for(const method of ['setClosable','setResizable','setMinimizable','setMaximizable'])assert(!nativeCalls.some(([name])=>name===method));
- assert(nativeCalls.some(([name,value])=>name==='setSize'&&value.width===500&&value.height===450));
+ assert(nativeCalls.some(([name,value])=>name==='setSize'&&value.width===500&&value.height===560));
+ topmost=false;await focusHandler({payload:false});assert(topmost);
+ topmost=false;await topTimers.get(1)();assert(topmost);assert(!nativeCalls.some(([name])=>name==='setFocus'));
  let prevented=0;closeHandler({preventDefault:()=>prevented++});events.keydown({key:'Escape',preventDefault:()=>prevented++,stopImmediatePropagation(){}});assert.equal(prevented,2);
  await moveHandler({payload:{x:300,y:400}});assert(nativeCalls.some(([name,value])=>name==='setPosition'&&value.x===100&&value.y===200));
- fixedGate.close();assert.equal(events.keydown,undefined);
+ fixedGate.close();assert.equal(events.keydown,undefined);assert.equal(topTimers.size,0);
 
  for(const route of ['#/','#/update']){
   const document=dom(),timers=[],window={document,location:{hash:route},addEventListener(){},setTimeout:f=>{timers.push(f);return timers.length;},clearTimeout(){},setInterval(){}};

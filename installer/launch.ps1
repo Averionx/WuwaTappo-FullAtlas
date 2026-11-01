@@ -1,5 +1,7 @@
-param([switch]$CheckOnly)
+param([switch]$CheckOnly,[string]$UpdateJob='')
 $ErrorActionPreference='Stop'
+if(-not $UpdateJob){$UpdateJob=$env:WUWA_UPDATE_JOB}
+Remove-Item -LiteralPath Env:WUWA_UPDATE_JOB -ErrorAction SilentlyContinue
 $taskPrincipal=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if(-not $taskPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
  $taskArgs=@('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$PSCommandPath+'"'))
@@ -8,6 +10,25 @@ if(-not $taskPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adminis
  exit
 }
 try{
+ # A manual re-open during download/replacement must not lock the old EXE.
+ # Only this update's helper may start the new version before health ACK.
+ $taskUpdatePointer=Join-Path $PSScriptRoot '.updates\install-current.json'
+ if(Test-Path -LiteralPath $taskUpdatePointer){
+  try{
+   $taskUpdate=Get-Content -LiteralPath $taskUpdatePointer -Raw|ConvertFrom-Json
+   if($taskUpdate.job -match '^[0-9a-f]{32}$' -and $UpdateJob -ne $taskUpdate.job){
+    $taskProgressPath=Join-Path $PSScriptRoot ('.updates\'+$taskUpdate.job+'\progress.json')
+    $taskProgress=Get-Content -LiteralPath $taskProgressPath -Raw|ConvertFrom-Json
+    if($taskProgress.phase -notin @('complete','failed')){
+     $taskUpdateProcess=Get-Process -Id $taskProgress.pid -ErrorAction SilentlyContinue
+     if($taskUpdateProcess){
+      $taskProcessEpoch=([DateTimeOffset]$taskUpdateProcess.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds()/1000
+      if([Math]::Abs($taskProcessEpoch-$taskProgress.process_started) -lt 1){exit}
+     }
+    }
+   }
+  }catch{Write-Verbose 'No active update owner found.'}
+ }
  # Do not pass a frozen upgrader's temporary DLL directory into native children.
  if(-not ('WuwaTappoNativeLaunch' -as [type])){
   Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class WuwaTappoNativeLaunch { [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool SetDllDirectoryW(string value); }'

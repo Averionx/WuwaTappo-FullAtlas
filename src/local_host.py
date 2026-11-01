@@ -14,6 +14,10 @@ if '--apply-update' in sys.argv:
     pos = sys.argv.index('--apply-update')
     apply_update(sys.argv[pos+1], sys.argv[pos+2])
     sys.exit(0)
+if '--update-progress' in sys.argv:
+    from update_progress import progress_window
+    progress_window(sys.argv[sys.argv.index('--update-progress')+1])
+    sys.exit(0)
 if '--startup-disable' in sys.argv:
     root=Path(sys.executable if getattr(sys,'frozen',False) else __file__).resolve().parent
     print(json.dumps(StartupManager(root).run('disable')),flush=True)
@@ -22,7 +26,8 @@ if '--self-check' in sys.argv:
     import ssl
     context = ssl.create_default_context()
     print(json.dumps({'tls_ready':True,'hostname_verification':context.check_hostname,
-                      'certificate_verification':context.verify_mode == ssl.CERT_REQUIRED}),flush=True)
+                      'certificate_verification':context.verify_mode == ssl.CERT_REQUIRED,
+                      'ui_fonts_ready':all((Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[1]/'build'))/'ui_fonts'/name).is_file() for name in ('WT-Tappo-UI-Medium.ttf','WT-Tappo-UI-Bold.ttf'))}),flush=True)
     sys.exit(0)
 
 ROOT = Path(sys.executable if getattr(sys,'frozen',False) else __file__).resolve().parent
@@ -217,21 +222,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self.respond(200, result)
                 if action == 'status':
                     return self.respond(200, UPDATER.status())
-                if action in ('preview', 'preview-close'):
-                    UPDATER.preview_until = time.monotonic()+300 if action=='preview' else 0
-                    return self.respond(200, UPDATER.status())
                 if action == 'healthy':
                     body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))) or b'{}')
                     return self.respond(200, UPDATER.healthy(body.get('version')))
                 if action == 'install':
-                    result = UPDATER.prepare()
-                    ASSISTANT.handle('quit', {}, ACTUAL_OFFLINE)
-                    self.respond(200, result)
-                    def stop_for_update():
-                        ASSISTANT.save(True)
-                        self.server.shutdown()
-                    threading.Timer(8, stop_for_update).start()
-                    return
+                    def ready_for_restart(result):
+                        ASSISTANT.handle('quit', {}, ACTUAL_OFFLINE)
+                        def stop_for_update():
+                            ASSISTANT.save(True)
+                            self.server.shutdown()
+                        threading.Timer(8, stop_for_update).start()
+                    return self.respond(200, UPDATER.start_install(ready_for_restart))
                 return self.respond(404, {'error':'Unknown update action'})
             except Exception as error:
                 return self.respond(409, {'error':str(error)})

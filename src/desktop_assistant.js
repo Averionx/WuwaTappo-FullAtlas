@@ -1,6 +1,6 @@
 /* Main-renderer driver. No signal enters the Windows input queue. */
 function createDesktopAssistant({ref, window, atlas, nativeWindow=null, displayName=(type,name)=>name}) {
-  const VERSION='1.3.5', updateRequired=ref(false);
+  const VERSION='1.3.6', updateRequired=ref(false);
   const state=ref({settings:{enabled:false,speed:5,auto_chest:false,threshold:1000,remember_monitor:true}});
   const request=(action,body={})=>atlas.request('/assistant/'+action,body);
   const ready=atlas.ready.then(()=>request('state')).then(v=>{state.value=v;updateRequired.value=!!v.update_required;});
@@ -190,7 +190,7 @@ function createDesktopAssistant({ref, window, atlas, nativeWindow=null, displayN
   async function pollPolicy(){
     if(disposed)return;
     try{const result=await atlas.request('/update/status',{});await applyUpdateStatus(result);}catch{}
-    if(!disposed)window.setTimeout(pollPolicy,15000);
+    if(!disposed)window.setTimeout(pollPolicy,updateGate?500:15000);
   }
   ready.then(pollPolicy).catch(()=>{});
   window.addEventListener('pagehide',()=>{disposed=true;closePanel();updateGate?.close();});

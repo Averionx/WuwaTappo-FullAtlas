@@ -1,5 +1,6 @@
 """Validated mod-release updates with a reversible file transaction."""
 from pathlib import Path, PurePosixPath
+from html.parser import HTMLParser
 import hashlib
 import json
 import os
@@ -14,12 +15,58 @@ import uuid
 import zipfile
 from desktop_assistant import atomic_json
 from process_launch import popen_independent
+from update_progress import UpdateLease, read_progress, write_progress, TERMINAL
 
 REPO = 'Averionx/WuwaTappo-FullAtlas'
 TOP_LEVEL = {'WuwaTappo.Local.exe', 'LocalGalleryHost.exe', 'package_config.json',
              'launch.ps1', 'initialize.ps1', 'restore_network.ps1', 'README.md',
              'LICENSE', 'THIRD_PARTY_NOTICES.md'}
 PROTECTED = {'local_config.json', 'offline_state.json', 'assistant_state.json', 'update_policy.json', 'profile', 'cache', 'runtime'}
+
+
+class ReleaseNotesParser(HTMLParser):
+    """Read only release notes, never the repository About or page metadata."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.depth = 0
+        self.complete = False
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        if self.depth and tag in ('p','li','h1','h2','h3','h4','br','tr'):
+            self.parts.append('\n' + ('• ' if tag=='li' else ''))
+        if tag != 'div':return
+        if self.depth:self.depth += 1
+        elif not self.complete and 'markdown-body' in dict(attrs).get('class', '').split():
+            self.depth = 1
+
+    def handle_endtag(self, tag):
+        if self.depth and tag in ('p','li','h1','h2','h3','h4','tr'):
+            self.parts.append('\n')
+        if tag == 'div' and self.depth:
+            self.depth -= 1
+            if not self.depth:self.complete = True
+
+    def handle_data(self, data):
+        if self.depth:self.parts.append(data)
+
+    def text(self):
+        return ''.join(self.parts) if self.complete else ''
+
+
+def release_notes_text(body):
+    if not isinstance(body,str):return ''
+    lines=[]
+    for line in body[:32000].splitlines():
+        value=line.strip()
+        heading=re.sub(r'^#{1,6}\s*','',value)
+        if re.fullmatch(r'(下载(?:与升级)?|Downloads?|Installation|安装(?:与升级)?)[：:]?',heading,re.I):break
+        if value.startswith('|') or value.startswith('!['):continue
+        value=re.sub(r'\[([^\]]+)\]\([^\)]+\)',r'\1',heading)
+        value=value.replace('**','').replace('`','')
+        value=re.sub(r'^[-*]\s+','• ',value)
+        if value or (lines and lines[-1]):lines.append(value)
+    return '\n'.join(lines).strip()[:12000]
 
 
 def safe_name(name):
@@ -108,8 +155,10 @@ class FileTransaction:
         self.backup = self.stage.parent/'backup'
         self.changed = []
 
-    def apply(self):
+    def apply(self, progress=None):
         # Validate every staged byte before replacing even one installed file.
+        total=sum(item['size'] for item in self.manifest['files']) or 1
+        done=0
         for item in self.manifest['files']:
             source = self.stage/item['path']
             if not source.is_file() or source.stat().st_size != item['size'] or digest(source) != item['sha256']:
@@ -129,7 +178,15 @@ class FileTransaction:
             target.parent.mkdir(parents=True, exist_ok=True)
             temp = target.with_name(target.name+'.update-tmp')
             shutil.copy2(source, temp)
-            os.replace(temp, target)
+            deadline=time.monotonic()+30
+            while True:
+                try:os.replace(temp,target);break
+                except PermissionError:
+                    if time.monotonic()>=deadline:raise
+                    if progress:progress(80+16*done/total,'等待旧文件释放后继续更新…')
+                    time.sleep(.25)
+            done+=item['size']
+            if progress:progress(80+16*done/total,'正在备份并替换程序文件…')
 
     def rollback(self):
         for item in reversed(self.changed):
@@ -146,6 +203,7 @@ class Updater:
         self.available = None
         self.lock = threading.Lock()
         self.check_lock = threading.Lock()
+        self.install_start_lock = threading.Lock()
         self.policy_file = self.root/'update_policy.json'
         self.last_error = None
         self.checked_at = 0
@@ -157,6 +215,7 @@ class Updater:
         self.github_version = ''
         self.github_checked = False
         self.github_error = None
+        self.latest_notes = ''
         self.preview_until = 0
         if self.policy_file.exists():
             try:
@@ -222,6 +281,7 @@ class Updater:
         if release.get('draft') or release.get('prerelease'):
             return self.status()
         self.github_version=version;self.github_checked=True;self.github_error=None
+        self.latest_notes=release_notes_text(release.get('body',''))
         match=re.search(r'(?:适配官方(?:桌宠)?|官方基底)[\s*：:]*([0-9]+(?:\.[0-9]+){1,3})',release.get('body',''))
         self.release_base=match[1] if match else ''
         current_base=self.config.get('client_version','')
@@ -251,7 +311,7 @@ class Updater:
         match = re.search(r'^([0-9a-fA-F]{64})\s+\*?'+re.escape(asset['name'])+r'\s*$', entries, re.M)
         if not match or not 0 < asset['size'] <= 500*1024*1024:
             raise ValueError('升级包缺少有效 SHA256 校验')
-        candidate = {'version':version,'url':asset['browser_download_url'],'sha256':match[1].lower(),'size':asset['size']}
+        candidate = {'version':version,'url':asset['browser_download_url'],'sha256':match[1].lower(),'size':asset['size'],'notes':self.latest_notes}
         if self.release_base:candidate['client_version']=self.release_base
         if not self.valid_candidate(candidate):
             raise ValueError('Invalid release download destination')
@@ -265,6 +325,9 @@ class Updater:
         request = urllib.request.Request('https://github.com/'+REPO+'/releases/latest',headers={'User-Agent':'WuwaTappo-FullAtlas-Updater'})
         with urllib.request.urlopen(request,timeout=45) as response:
             final = response.geturl()
+            page = response.read(2*1024*1024+1)
+        if len(page)>2*1024*1024:
+            raise ValueError('Release page exceeds limit')
         prefix = 'https://github.com/'+REPO+'/releases/tag/'
         if not final.startswith(prefix):
             raise ValueError('无法确定修改版发布版本')
@@ -274,6 +337,12 @@ class Updater:
         result = {'tag_name':tag,'assets':[]}
         if version_tuple(version) <= version_tuple(self.config['mod_version']):
             return result
+        notes=ReleaseNotesParser()
+        notes.feed(page.decode('utf-8',errors='replace'))
+        notes.close()
+        result['body']=notes.text()
+        if not result['body'].strip():
+            raise ValueError('暂时无法读取 GitHub 更新说明，请稍后重试')
         base = 'https://github.com/'+REPO+'/releases/download/'+tag+'/'
         name = 'WuwaTappo-FullAtlas-'+version+'-x64-update.zip'
         try:
@@ -285,7 +354,26 @@ class Updater:
             pass
         return result
 
-    def prepare(self):
+    def start_install(self, on_ready):
+        with self.install_start_lock:
+            existing=read_progress(self.root)
+            if existing and existing.get('phase') not in TERMINAL:
+                return {'started':True,'installation':existing,'message':existing['message']}
+            if not self.available or self.waiting_for_adapter:raise ValueError('请先检查可用适配更新')
+            folder=self.root/'.updates'/uuid.uuid4().hex
+            folder.mkdir(parents=True)
+            write_progress(folder,'queued',0,'准备下载更新…')
+            atomic_json(self.root/'.updates/install-current.json',{'job':folder.name,'version':self.available['version']})
+            def worker():
+                try:
+                    result=self.prepare(folder)
+                    on_ready(result)
+                except Exception as error:
+                    write_progress(folder,'failed',0,'更新失败：'+str(error)+'。原程序与数据保留。')
+            threading.Thread(target=worker,daemon=True).start()
+            return {'started':True,'installation':read_progress(self.root),'message':'正在下载更新…'}
+
+    def prepare(self, folder=None):
         if not self.lock.acquire(blocking=False):
             raise ValueError('更新已在准备中')
         try:
@@ -293,25 +381,39 @@ class Updater:
                 raise ValueError('请先检查更新')
             if self.waiting_for_adapter:
                 raise ValueError('官方新版尚无对应适配包，请等待作者适配')
-            updates = self.root/'.updates'
-            updates.mkdir(exist_ok=True)
-            folder = updates/uuid.uuid4().hex
-            folder.mkdir()
+            candidate=dict(self.available)
+            updates = self.root/'.updates';updates.mkdir(exist_ok=True)
+            if folder is None:
+                folder=updates/uuid.uuid4().hex;folder.mkdir()
+            folder=Path(folder)
             archive = folder/'download.zip'
-            data = self.fetch(self.available['url'],self.available['size'])
-            if len(data)!=self.available['size'] or hashlib.sha256(data).hexdigest()!=self.available['sha256']:
-                raise ValueError('升级包校验失败，原程序未变动')
-            archive.write_bytes(data)
-            manifest = unpack(archive,folder/'stage')
-            if manifest['version'] != self.available['version']:
+            with UpdateLease(self.root):
+                expected=candidate['size'];received=0;checksum=hashlib.sha256()
+                request=urllib.request.Request(candidate['url'],headers={'User-Agent':'WuwaTappo-FullAtlas-Updater'})
+                write_progress(folder,'downloading',1,'正在下载升级包…',completed=0,total=expected)
+                with urllib.request.urlopen(request,timeout=45) as response,archive.open('wb') as output:
+                    while True:
+                        chunk=response.read(256*1024)
+                        if not chunk:break
+                        received+=len(chunk)
+                        if received>expected:raise ValueError('升级包大小超出清单')
+                        output.write(chunk);checksum.update(chunk)
+                        write_progress(folder,'downloading',1+59*received/expected,'正在下载升级包…',completed=received,total=expected)
+                write_progress(folder,'verifying',62,'正在校验下载文件…')
+                if received!=expected or checksum.hexdigest()!=candidate['sha256']:
+                    raise ValueError('升级包校验失败，原程序未变动')
+                write_progress(folder,'extracting',65,'正在解压并校验程序文件…')
+                manifest = unpack(archive,folder/'stage')
+            if manifest['version'] != candidate['version']:
                 raise ValueError('Release version mismatch')
-            if self.available.get('client_version') and manifest.get('client_version')!=self.available['client_version']:
+            if candidate.get('client_version') and manifest.get('client_version')!=candidate['client_version']:
                 raise ValueError('官方基底与发行说明不一致，未改动原程序')
             helper = folder/'helper'
             helper.mkdir()
             shutil.copy2(self.root/'LocalGalleryHost.exe',helper/'LocalGalleryHost.exe')
             shutil.copytree(self.root/'_internal',helper/'_internal')
-            atomic_json(folder/'pending.json',{'version':manifest['version'],'id':folder.name})
+            atomic_json(folder/'pending.json',{'version':manifest['version'],'from_version':self.config['mod_version'],'id':folder.name})
+            write_progress(folder,'waiting_exit',75,'升级包已校验，正在退出桌宠…')
             popen_independent([str(helper/'LocalGalleryHost.exe'),'--apply-update',str(self.root),str(folder/'stage')],
                              cwd=helper,creationflags=0x08000000)
             return {'restarting':True,'message':'升级包已校验。正在退出桌宠、备份并原地升级…'}
@@ -324,6 +426,8 @@ class Updater:
                 'current_version':self.config['mod_version'],'official_checked':self.official_checked,
                 'official_error':self.official_error,'waiting_for_adapter':self.waiting_for_adapter}
         common.update(github_version=self.github_version,github_checked=self.github_checked,github_error=self.github_error)
+        common['installation']=read_progress(self.root)
+        common['release_notes']=(self.available or {}).get('notes','') or (self.latest_notes if not self.available or self.available['version']==self.github_version else '')
         base=self.config.get('client_version','')
         if self.official_error:
             official_state,official_message='error','官方版本检查失败，请重试。'
@@ -361,6 +465,8 @@ class Updater:
             raise ValueError('Frontend version does not match installed package')
         for pending in (self.root/'.updates').glob('*/pending.json'):
             value = json.loads(pending.read_text(encoding='utf-8'))
+            result_file=pending.parent/'result.json'
+            if result_file.exists() and not json.loads(result_file.read_text(encoding='utf-8')).get('ok'):continue
             if value['version'] == self.config['mod_version']:
                 (pending.parent/'healthy').write_text(value['version'],encoding='utf-8')
         return {'ok':True}
@@ -380,10 +486,13 @@ def processes(root):
     return result
 
 
-def launch(root):
+def launch(root, job=None):
     powershell = Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'
-    popen_independent([str(powershell),'-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',str(root/'launch.ps1')],
-                     cwd=root,creationflags=0x08000000)
+    args=[str(powershell),'-NoProfile','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',str(root/'launch.ps1')]
+    environment=dict(os.environ)
+    if job:environment['WUWA_UPDATE_JOB']=job
+    popen_independent(args,
+                     cwd=root,creationflags=0x08000000,env=environment)
 
 
 def apply_update(root_arg, stage_arg):
@@ -391,7 +500,28 @@ def apply_update(root_arg, stage_arg):
     if not stage.is_relative_to(root/'.updates') or stage.name!='stage':
         raise ValueError('Invalid update stage')
     folder = stage.parent
+    # Held through restart/health confirmation. A second helper cannot replace
+    # files, restart the old EXE or roll back the first helper's transaction.
+    deadline=time.monotonic()+5
+    while True:
+        lease=UpdateLease(root)
+        try:lease.__enter__()
+        except RuntimeError as error:
+            progress=read_progress(root)
+            if progress.get('job')==folder.name and progress.get('phase')=='queued' and time.monotonic()<deadline:
+                time.sleep(.05);continue
+            atomic_json(folder/'result.json',{'ok':False,'error':str(error)});return
+        try:_apply_update_locked(root,stage,folder)
+        finally:lease.__exit__(None,None,None)
+        return
+
+
+def _apply_update_locked(root,stage,folder):
     transaction = FileTransaction(root, stage)
+    def report(phase,percent,message):return write_progress(folder,phase,percent,message)
+    report('waiting_exit',75,'正在等待桌宠保存数据并退出…')
+    if getattr(sys,'frozen',False):
+        popen_independent([sys.executable,'--update-progress',str(folder)],cwd=folder,creationflags=0x08000000)
     try:
         # Original exit flow persists counters. Never force-close the old app.
         deadline = time.monotonic()+60
@@ -406,8 +536,10 @@ def apply_update(root_arg, stage_arg):
             if time.monotonic()>deadline:
                 raise TimeoutError('旧桌宠仍在运行，升级取消；原文件未替换。')
             time.sleep(.5)
-        transaction.apply()
-        launch(root)
+        report('installing',80,'正在备份并替换程序文件…')
+        transaction.apply(lambda percent,message:report('installing',percent,message))
+        report('restarting',97,'正在启动新版本…')
+        launch(root,folder.name)
         deadline = time.monotonic()+90
         while not (folder/'healthy').exists():
             if time.monotonic()>deadline:
@@ -421,6 +553,7 @@ def apply_update(root_arg, stage_arg):
         (folder/'download.zip').unlink(missing_ok=True)
         (folder/'pending.json').unlink(missing_ok=True)
         atomic_json(folder/'result.json',{'ok':True,'version':transaction.manifest['version']})
+        report('complete',100,'更新完成，新版本已启动。')
     except Exception as error:
         if transaction.changed:
             for proc in processes(root):
@@ -428,8 +561,9 @@ def apply_update(root_arg, stage_arg):
             import psutil
             psutil.wait_procs(processes(root),timeout=10)
             transaction.rollback()
-            launch(root)
+            launch(root,folder.name)
         else:
             # The old application may still be open, but its host already exited.
-            launch(root)
+            launch(root,folder.name)
         atomic_json(folder/'result.json',{'ok':False,'error':str(error)})
+        report('failed',0,'更新失败：'+str(error)+'。已保留或恢复旧版本，请重试。')

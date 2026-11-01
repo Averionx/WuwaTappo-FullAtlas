@@ -25,11 +25,15 @@ function assistantUi(window) {
     .wt-console input[type=number]{font:inherit;color:var(--ink);width:112px;border:1px solid var(--line);padding:6px 10px;border-radius:8px;background:#faf9f7}.wt-chart{display:flex;gap:14px;align-items:flex-end;height:180px;margin:20px 0 8px}.wt-column{flex:1;min-width:0;text-align:center;font-size:11px;color:var(--muted)}.wt-bar{margin:5px auto;background:#ddc292;border-radius:5px 5px 2px 2px;width:70%}.wt-empty{padding:28px 10px;text-align:center;color:var(--muted);font-size:12px}
     .wt-console footer{padding:10px 24px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:11px;color:var(--muted);background:#faf9f6;flex-shrink:0}.wt-console footer button{font-size:11px;padding:4px 10px;min-height:28px}.wt-notice{font-size:12px;color:#9c6c32;padding:6px 0;min-height:20px}
     .wt-gate{--ink:#986b49;--muted:#b0977c;position:fixed;inset:0;z-index:2147483500;background:transparent;display:grid;place-items:stretch;padding:8px;overflow:hidden;font-family:var(--font-main,"975MaruSC","Microsoft YaHei",sans-serif)}
-    .wt-gate article{width:100%;height:100%;min-height:0;padding:28px;background:#fff6e2;border:2px solid #e7c298;border-radius:28px;box-shadow:0 3px 0 #dcb78c;display:flex;flex-direction:column;overflow:auto;animation:wt-update-in .16s ease-out}
+    .wt-gate article{width:100%;height:100%;min-height:0;padding:24px;background:#fff6e2;border:2px solid #e7c298;border-radius:28px;box-shadow:0 3px 0 #dcb78c;display:flex;flex-direction:column;overflow:hidden;animation:wt-update-in .16s ease-out}
     .wt-gate .wt-update-kicker{font-size:11px;letter-spacing:1.4px;color:#b28d66;margin:0 0 8px}.wt-gate h2{font-size:25px;line-height:1.5;font-family:var(--font-bold,inherit);color:#9d653e;margin:0 0 16px}.wt-gate p{margin:14px 0;font-size:14px;line-height:1.8}
     .wt-gate .wt-update-versions{background:#f9e7ca;border:1px solid #efd2a8;border-radius:14px;padding:10px 14px;font-size:13px}.wt-gate .wt-update-retain{font-size:12px;color:#b0977c;margin-bottom:18px}.wt-gate .wt-notice:empty{display:none}.wt-gate .wt-controls{display:grid;grid-template-columns:1.4fr 1fr;gap:12px;margin-top:auto;padding-top:14px}
     .wt-gate button{min-width:0;min-height:34px;padding:6px 14px;border:1px solid #e5be91;border-radius:18px;background:#ffecd0;color:#a57550;font-size:13px}.wt-gate button:hover{background:#ffdfa9;border-color:#dfb482}.wt-gate button:focus-visible{outline:2px solid #bc8755;outline-offset:3px}
     .wt-gate .wt-update-install{width:100%;min-height:44px;margin:0;background:#ffd394;border:1px solid #e8b16f;box-shadow:0 2px 0 #e7b477;color:#97603b;font-size:16px;font-weight:600}.wt-gate .wt-update-exit{min-height:44px}.wt-gate .wt-update-install:hover{background:#ffca80}.wt-gate button:disabled{opacity:.55;box-shadow:none}
+    .wt-gate .wt-update-kicker{flex-shrink:0;margin:0 0 6px}.wt-gate h2{flex-shrink:0;font-size:22px;line-height:1.4;margin-bottom:12px}.wt-gate .wt-update-versions{flex-shrink:0;margin:0 0 12px;padding:8px 12px}.wt-gate .wt-update-message{flex-shrink:0;font-size:13px;line-height:1.6;margin:0 0 12px}
+    .wt-gate .wt-update-notes{flex:1 1 0;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;overscroll-behavior:contain;border:1px solid #e9d0aa;border-radius:14px;background:#fffbed80;padding:12px 14px}.wt-update-notes h3{font-size:13px;margin:0 0 8px;color:#a16f47}.wt-update-notes-content{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.75;color:#a27a58}.wt-gate .wt-update-retain{flex-shrink:0;font-size:11px;line-height:1.6;margin:10px 0 0}.wt-gate .wt-controls{flex-shrink:0}.wt-gate .wt-notice{flex-shrink:0;max-height:70px;overflow:auto}
+    .wt-gate .common-scrollbar2::-webkit-scrollbar{width:5px;background-color:transparent}.wt-gate .common-scrollbar2::-webkit-scrollbar-track{background-color:#eed4b8;border-radius:3px;border:1px solid transparent;background-clip:content-box}.wt-gate .common-scrollbar2::-webkit-scrollbar-thumb{background-color:#ffdca8;border-radius:3px}
+    .wt-update-progress{flex-shrink:0;margin:10px 0 0;font-size:12px;color:#a07850}.wt-update-progress[hidden]{display:none}.wt-update-progress-track{height:7px;border-radius:6px;background:#eeddbf;overflow:hidden;margin:6px 0}.wt-update-progress-fill{height:100%;width:0;background:linear-gradient(90deg,#d6a263,#efc883);border-radius:6px;transition:width .2s}.wt-update-progress-detail{font-size:11px;color:#b0977c;text-align:right}
     @keyframes wt-update-in{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){.wt-gate article{animation:none}}
     @media(max-width:680px){.wt-stats{grid-template-columns:repeat(2,1fr)}.wt-content{padding:14px}.wt-console header{padding:16px 16px 10px}.wt-console nav{padding:0 14px 10px}.wt-console footer{padding:10px 14px}.wt-progress-grid{gap:14px}.wt-speeds{gap:6px}.wt-console .wt-speed{padding:8px}}
     .wt-console.wt-embedded{--ink:#986f50;--muted:#b29a7e;--line:#e6caa7;--cream:#ffedca;position:relative;inset:auto;z-index:1;height:100%;width:100%;background:transparent;border:0;border-radius:0;box-shadow:none;font-family:inherit}
@@ -44,6 +48,19 @@ function assistantUi(window) {
   function el(tag,text,parent,cls){const n=doc.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;parent?.append(n);return n;}
   function button(text,parent,action,cls){const n=el('button',text,parent,cls);n.type='button';n.onclick=action;return n;}
   return {el,button};
+}
+
+function createUpdateProgress(ui,parent){
+  const root=ui.el('div',undefined,parent,'wt-update-progress');root.hidden=true;
+  const label=ui.el('div','准备更新…',root),track=ui.el('div',undefined,root,'wt-update-progress-track');
+  track.setAttribute('role','progressbar');track.setAttribute('aria-label','版本更新进度');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');
+  const fill=ui.el('div',undefined,track,'wt-update-progress-fill'),detail=ui.el('div','',root,'wt-update-progress-detail');
+  return state=>{
+    root.hidden=!state?.phase;if(root.hidden)return;
+    const percent=Math.max(0,Math.min(100,Number(state.percent)||0));
+    label.textContent=state.message||'正在更新…';fill.style.width=percent+'%';track.setAttribute('aria-valuenow',String(percent));
+    detail.textContent=state.phase==='downloading'&&state.total?`${(state.completed/1048576).toFixed(1)} / ${(state.total/1048576).toFixed(1)} MB · ${percent}%`:`${percent}%`;
+  };
 }
 
 function createAssistantDashboard(d){
@@ -123,8 +140,8 @@ function createAssistantDashboard(d){
       const c=card();el('h3','版本更新',c);el('p','启动时及每 30 分钟检查 GitHub。确认有可用新版后，更新完成才能继续使用；官方新版尚无适配包时请等待。',c,'wt-muted');
       const versionRows=el('div',undefined,c);versionRows.style.margin='14px 0';const versions={};
       for(const[key,label]of [['official','官方最新版'],['github','修改版最新版'],['current','当前安装版本']]){const row=el('div',undefined,versionRows,'wt-setting');el('span',label,row);versions[key]=el('strong',key==='current'?'修改版 v'+d.version+' · 基底 v1.0.3':'等待检查',row);}
-      const message=el('p','点击检查更新获取版本信息',c),actions=el('div',undefined,c,'wt-controls');message.style.whiteSpace='pre-line';let busy=false,result=null;
-      const install=button('一键升级',actions,async()=>{if(busy||!result?.available)return;busy=true;install.disabled=true;message.textContent='正在下载并校验，升级将保留账号与设置…';try{message.textContent=(await d.atlas.request('/update/install',{})).message;}catch(e){message.textContent=e.message;busy=false;install.disabled=false;}},'wt-primary');install.disabled=true;
+      const message=el('p','点击检查更新获取版本信息',c),progress=createUpdateProgress({el},c),actions=el('div',undefined,c,'wt-controls');message.style.whiteSpace='pre-line';let busy=false,result=null;
+      const install=button('一键升级',actions,async()=>{if(busy||!result?.available)return;busy=true;install.disabled=true;message.textContent='正在下载并校验，升级将保留账号与设置…';try{const started=await d.atlas.request('/update/install',{});message.textContent=started.message;progress(started.installation);}catch(e){message.textContent=e.message;busy=false;install.disabled=false;}},'wt-primary');install.disabled=true;
       const apply=r=>{
         result=r;
         const officialHint={newer:'有新版',current:'版本一致'}[r.official_state];
@@ -133,12 +150,13 @@ function createAssistantDashboard(d){
         versions.github.textContent=r.github_error?'检查失败':r.github_checked?'v'+r.github_version+'（GitHub 已发布'+(modHint?' · '+modHint:'')+'）':'等待检查';
         versions.current.textContent='修改版 v'+(r.current_version||d.version)+' · 基底 v'+(r.client_version||'1.0.3');
         message.textContent=r.official_message&&r.mod_message?r.official_message+'\n'+r.mod_message:r.message;
+        if(r.installation?.phase&&r.installation.version===r.version){progress(r.installation);busy=!['failed','complete'].includes(r.installation.phase);if(r.installation.phase==='failed')message.textContent=r.installation.message;}
+        else if(['failed','complete'].includes(r.installation?.phase)){progress(null);busy=false;}
         install.disabled=!r.available||!!r.waiting_for_adapter||busy;
       };
       const check=button('检查官方与适配版',actions,async()=>{if(busy)return;busy=true;check.disabled=true;install.disabled=true;message.textContent='正在检查官方与 GitHub 版本…';try{const r=await d.atlas.request('/update/check',{});busy=false;apply(r);}catch(e){message.textContent='检查失败：'+e.message;busy=false;}finally{check.disabled=false;}});
       d.atlas.request('/update/status',{}).then(r=>{if(!closed&&tab==='updates'&&!busy)apply(r);}).catch(e=>{message.textContent=e.message;});
-      button('预览更新弹窗',actions,()=>d.atlas.request('/update/preview',{}));
-      el('p','普通提交、草稿、预发布和不完整升级包不触发强制更新。下载失败可重试或退出，保留原程序与个人数据。',c,'wt-muted');renderView=()=>{};
+      el('p','普通提交、草稿、预发布和不完整升级包不触发强制更新。下载失败可重试或退出，保留原程序与个人数据。',c,'wt-muted');renderView=()=>{if(busy)d.atlas.request('/update/status',{}).then(r=>{if(!closed&&tab==='updates')apply(r);}).catch(()=>{});};
       check.onclick();
     }
     if(value)paint();
@@ -158,7 +176,12 @@ function createAssistantUpdateGate(d){
   const article=el('article',undefined,root);
   el('p','WUWA TAPPO · 版本更新',article,'wt-update-kicker');
   const title=el('h2',d.result.preview&&!d.result.required?'更新弹窗预览':'发现新版本，请更新',article);title.id='wt-update-title';
-  const versions=el('p',undefined,article,'wt-update-versions'),message=el('p',undefined,article);
+  const versions=el('p',undefined,article,'wt-update-versions'),message=el('p',undefined,article,'wt-update-message');
+  const notesBox=el('section',undefined,article,'wt-update-notes common-scrollbar2');
+  notesBox.tabIndex=0;notesBox.setAttribute('aria-labelledby','wt-update-notes-title');
+  el('h3','本次更新',notesBox).id='wt-update-notes-title';
+  const notes=el('div',undefined,notesBox,'wt-update-notes-content');
+  const progress=createUpdateProgress({el},article);
   el('p','账号、点数、装扮、开箱记录与设置均会保留。',article,'wt-update-retain');
   const status=el('p','',article,'wt-notice'),controls=el('div',undefined,article,'wt-controls');
   status.setAttribute('aria-live','polite');
@@ -166,17 +189,27 @@ function createAssistantUpdateGate(d){
   const install=button('立即更新',controls,async()=>{
     if(busy||!current.required)return;
     busy=true;install.disabled=exit.disabled=true;status.textContent='正在下载并校验升级包，请稍候…';
-    try{status.textContent=(await d.install()).message||'正在退出桌宠并重启…';}
+    try{const result=await d.install();status.textContent=result.message||'正在退出桌宠并重启…';progress(result.installation);}
     catch(error){busy=false;refresh(current);install.textContent='重试更新';status.textContent='更新失败：'+error.message+'。原程序与数据保留，请重试。';}
   },'wt-update-install');
   const exit=button('退出软件',controls,()=>{if(!busy)return d.quit();},'wt-update-exit');
   function refresh(result){
-    if(closed||busy)return;current=result;
+    if(closed)return;current=result;
+    const operation=result.installation;
+    if(operation?.phase&&operation.version===result.version){
+      progress(operation);
+      busy=!['failed','complete'].includes(operation.phase);
+      if(operation.phase==='failed'){install.textContent='重试更新';status.textContent=operation.message;}
+      else if(busy)status.textContent='';
+    }
+    else if(['failed','complete'].includes(operation?.phase)){progress(null);busy=false;}
     const preview=result.preview&&!result.required;
     title.textContent=preview?'更新弹窗预览':'发现新版本，请更新';
     versions.textContent='当前 v'+(result.current_version||d.version)+'  →  '+(preview?'新版示例':'最新 v'+result.version);
     message.textContent=preview?'这是更新窗口预览，不会下载程序。此窗口只能通过退出软件关闭。':'新版本已准备好，必须更新后才能继续使用。';
-    install.disabled=!result.required;exit.disabled=false;
+    const detail=typeof result.release_notes==='string'&&result.release_notes.trim()?result.release_notes:(result.error||result.checked_at?'更新详情暂时无法读取，请稍后重试。':'正在读取更新详情…');
+    if(notes.textContent!==detail)notes.textContent=detail;
+    install.disabled=busy||!result.required;exit.disabled=busy;
   }
   function keydown(event){
     if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation?.();}
@@ -186,7 +219,7 @@ function createAssistantUpdateGate(d){
     }
   }
   window.addEventListener?.('keydown',keydown,true);
-  let unlistenClose=null,unlistenMove=null;
+  let unlistenClose=null,unlistenMove=null,unlistenFocus=null,topTimer=null;
   const nativeReady=(async()=>{
     if(!d.nativeWindow)return;
     const native=d.nativeWindow(),failed=[];
@@ -194,17 +227,24 @@ function createAssistantUpdateGate(d){
     // The original force-update window already has no resize/minimize/maximize
     // controls. Keep its native restrictions; use only its granted APIs.
     await run('setAlwaysOnTop',true);
-    await run('setSize',{type:'Logical',width:500,height:450});
+    await run('setSize',{type:'Logical',width:500,height:560});
     unlistenClose=await run('onCloseRequested',event=>event.preventDefault());
     const position=await run('outerPosition');let restoring=false;
     if(position)unlistenMove=await run('onMoved',async event=>{
       if(closed||restoring||(event.payload.x===position.x&&event.payload.y===position.y))return;
       restoring=true;try{await native.setPosition(position);}finally{restoring=false;}
     });
-    if(closed){unlistenClose?.();unlistenMove?.();}
-    await d.reportWindow?.({failed,compact:true,fixed:true,always_on_top:true});
+    let raising=false;
+    async function keepOnTop(){
+      if(closed||raising)return;raising=true;
+      try{await native.setAlwaysOnTop(true);}catch(error){console.warn('[update-window] restore topmost',error);}finally{raising=false;}
+    }
+    unlistenFocus=await run('onFocusChanged',event=>{if(!event.payload)return keepOnTop();});
+    if(!closed)topTimer=window.setInterval?.(keepOnTop,500);
+    if(closed){unlistenClose?.();unlistenMove?.();unlistenFocus?.();}
+    await d.reportWindow?.({failed,compact:true,fixed:true,always_on_top:true,topmost_guard:true,topmost_interval_ms:500});
   })();
   nativeReady.catch(error=>console.warn('[update-window] setup',error));
   refresh(current);root.focus();
-  return {update:refresh,nativeReady,close(){closed=true;unlistenClose?.();unlistenMove?.();window.removeEventListener?.('keydown',keydown,true);root.remove();}};
+  return {update:refresh,nativeReady,close(){closed=true;unlistenClose?.();unlistenMove?.();unlistenFocus?.();if(topTimer!==null)window.clearInterval?.(topTimer);window.removeEventListener?.('keydown',keydown,true);root.remove();}};
 }

@@ -15,7 +15,8 @@ embedded.parent.mkdir(exist_ok=True)
 shutil.copy2(archive,embedded)
 ssl_policy=Path(ssl.__file__).with_name('codex-rejected-cas.pem')
 ssl_data=['--add-data',str(ssl_policy)+os.pathsep+'.'] if ssl_policy.is_file() else []
-subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm','--clean','--onefile','--windowed','--uac-admin',*ssl_data,
+font_data=['--add-data',str(project/'build/ui_fonts')+os.pathsep+'ui_fonts'] if (project/'build/ui_fonts').is_dir() else []
+subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm','--clean','--onefile','--windowed','--uac-admin',*ssl_data,*font_data,
                '--name','WuwaTappo全图鉴版-'+version+'-原地升级',
                '--distpath',str(project/'dist'),'--workpath',str(project/'build/bootstrap-pyinstaller'),
                '--specpath',str(project/'build'),'--paths',str(project/'src'),

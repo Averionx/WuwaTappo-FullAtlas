@@ -19,7 +19,7 @@ def make(payload, destination):
         files.append({'path':name,'size':path.stat().st_size,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
     manifest=validate_manifest({'schema':1,'version':config['mod_version'],'client_version':config['client_version'],'files':files})
     destination.parent.mkdir(parents=True,exist_ok=True)
-    with zipfile.ZipFile(destination,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
+    with zipfile.ZipFile(destination,'w',zipfile.ZIP_LZMA) as archive:
         archive.writestr('update_manifest.json',json.dumps(manifest,ensure_ascii=False,indent=2))
         for item in files:archive.write(payload/item['path'],item['path'])
     return manifest

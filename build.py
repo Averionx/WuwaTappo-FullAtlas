@@ -9,7 +9,7 @@ SUPPORTED_BASES={
     'cedc37d0c11d112f4d933647fb6cf00e1dca847fc763250984c647080f849080':'1.0.3',
     'ee829c55916619ea2882e4a13546cbaf2f880363237608285105c7a4958e70b3':'1.0.4',
 }
-MOD_VERSION='1.3.7'
+MOD_VERSION='1.3.8'
 
 def copy_if_changed(source, destination):
     source, destination = Path(source), Path(destination)
@@ -79,16 +79,21 @@ def main():
     import ssl
     ssl_policy=Path(ssl.__file__).with_name('codex-rejected-cas.pem')
     if ssl_policy.is_file():ssl_data=['--add-data',str(ssl_policy)+os.pathsep+'.']
-    run([sys.executable,'-m','PyInstaller','--noconfirm','--clean','--onedir','--console',*ssl_data,
+    run([sys.executable,'-m','PyInstaller','--noconfirm','--clean','--onedir','--console','--exclude-module','numpy',*ssl_data,
          '--add-data',str(build/'ui_fonts')+os.pathsep+'ui_fonts',
          '--hidden-import','comtypes.gen.UIAutomationClient',
          '--name','LocalGalleryHost','--distpath',build/'frozen','--workpath',build/'pyinstaller',
          '--specpath',build,'--paths',PROJECT/'src',PROJECT/'src/local_host.py'])
     run([build/'frozen/LocalGalleryHost/LocalGalleryHost.exe','--self-check'])
-    shutil.copytree(build/'frozen/LocalGalleryHost',payload/'host',dirs_exist_ok=True)
-    # Keep the frozen service adjacent to the app; its Python DLLs stay in _internal.
-    shutil.copy2(payload/'host/LocalGalleryHost.exe',payload/'LocalGalleryHost.exe')
-    shutil.copytree(payload/'host/_internal',payload/'_internal',dirs_exist_ok=True)
+    frozen=build/'frozen/LocalGalleryHost'
+    # Replace the dependency directory so excluded packages from older builds
+    # cannot remain in the public payload.
+    internal=payload/'_internal'
+    if internal.exists():
+        assert internal.resolve().is_relative_to(payload.resolve())
+        shutil.rmtree(internal)
+    shutil.copy2(frozen/'LocalGalleryHost.exe',payload/'LocalGalleryHost.exe')
+    shutil.copytree(frozen/'_internal',internal)
     # Native pet startup must not depend on an upgrader's temporary _MEI DLLs.
     for name in ('VCRUNTIME140.dll','VCRUNTIME140_1.dll'):
         shutil.copy2(payload/'_internal'/name,payload/name)

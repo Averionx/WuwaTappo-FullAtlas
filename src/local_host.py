@@ -25,9 +25,13 @@ if '--startup-disable' in sys.argv:
 if '--self-check' in sys.argv:
     import ssl
     context = ssl.create_default_context()
-    print(json.dumps({'tls_ready':True,'hostname_verification':context.check_hostname,
+    result={'tls_ready':True,'hostname_verification':context.check_hostname,
                       'certificate_verification':context.verify_mode == ssl.CERT_REQUIRED,
-                      'ui_fonts_ready':all((Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[1]/'build'))/'ui_fonts'/name).is_file() for name in ('WT-Tappo-UI-Medium.ttf','WT-Tappo-UI-Bold.ttf'))}),flush=True)
+                      'ui_fonts_ready':all((Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[1]/'build'))/'ui_fonts'/name).is_file() for name in ('WT-Tappo-UI-Medium.ttf','WT-Tappo-UI-Bold.ttf'))}
+    if '--check-uia' in sys.argv:
+        from text_focus import FocusedTextProbe
+        result['uia']=FocusedTextProbe().probe(timeout=2)
+    print(json.dumps(result),flush=True)
     sys.exit(0)
 
 ROOT = Path(sys.executable if getattr(sys,'frozen',False) else __file__).resolve().parent

@@ -1,6 +1,6 @@
 /* Main-renderer driver. No signal enters the Windows input queue. */
 function createDesktopAssistant({ref, window, atlas, nativeWindow=null, displayName=(type,name)=>name}) {
-  const VERSION='1.3.6', updateRequired=ref(false);
+  const VERSION='1.3.7', updateRequired=ref(false);
   const state=ref({settings:{enabled:false,speed:5,auto_chest:false,threshold:1000,remember_monitor:true}});
   const request=(action,body={})=>atlas.request('/assistant/'+action,body);
   const ready=atlas.ready.then(()=>request('state')).then(v=>{state.value=v;updateRequired.value=!!v.update_required;});

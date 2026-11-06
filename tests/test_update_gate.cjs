@@ -80,6 +80,7 @@ const turns=async()=>{for(let i=0;i<25;i++)await Promise.resolve();};
  const opener=nodes.find(n=>main.slice(n.start,n.end).includes('[panel] open tab failed'));
  assert(opener);let opens=0,blockedToasts=0;
  const nativeContext=vm.createContext({console,Ie:()=>true,mt:()=>blockedToasts++,$:x=>x,rt:{value:''},$e:{value:false},ge:{value:false},Ru:async()=>opens++,Yn(){},it(){},Me(){}});
+ if(manifest.version==='1.0.4')Object.assign(nativeContext,{Pe:()=>true,Ct:()=>blockedToasts++,J:x=>x,it:nativeContext.rt,wt:{value:false},_e:{value:false},Eu:async()=>opens++,Gn(){},at(){},Te(){}});
  vm.runInContext(main.slice(opener.start,opener.end),nativeContext);
  await nativeContext[opener.id.name]('setting');assert.equal(opens,0);assert.equal(blockedToasts,1);
  await nativeContext[opener.id.name]('console');assert.equal(opens,1);assert.equal(nativeContext.rt.value,'console');

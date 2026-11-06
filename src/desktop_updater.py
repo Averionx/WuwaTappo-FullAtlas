@@ -260,7 +260,13 @@ class Updater:
                 return self.status()
 
     def check_official(self):
-        url='https://mc-wuwatappo.kurogames-global.com/app/version-json/latest.json?t='+str(int(time.time()))
+        host_url='https://mc-wuwatappo.kurogames-global.com/app/json-host/latest_host.json?v='+str(int(time.time()))
+        descriptor=json.loads(self.fetch(host_url))
+        url=descriptor.get('url','')
+        from urllib.parse import urlsplit
+        parsed=urlsplit(url)
+        if parsed.scheme!='https' or parsed.netloc!='mc-wuwatappo.kurogames-global.com' or not parsed.path.startswith('/app/version-json/'):
+            raise ValueError('Invalid official version manifest URL')
         value=json.loads(self.fetch(url))
         version_tuple(value['version'])
         self.official_version=value['version'];self.official_checked=True;self.official_error=None

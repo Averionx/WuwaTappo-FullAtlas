@@ -35,9 +35,10 @@ def integrate(project, base, frontend, structure, shared, main, panel, main_name
     animation = re.search(r'const \w+ = ([\w$]+)\(e\);', chest_text)[1]
     busy=re.search(r'if \(([\w$]+)\.value \|\| ([\w$]+)\.value\) return;',chest_text)
     assert busy,'chest busy contract'
-    remaining=[]
-    for ready_name in ('Wn','Gn'):
-        remaining.append(re.search(ready_name+r' = '+re.escape(mi['computed'])+r'\(\(\) =>[^\n]+: ([\w$]+)\.value <= 0\)',source)[1])
+    chest_bindings=re.findall(r'([\w$]+) = '+re.escape(mi['computed'])+r'\(\(\) =>[^\n]+\? !0 : ([\w$]+)\.value <= 0\)',source)
+    assert len(chest_bindings)==2,'chest readiness contract'
+    ready_names=[row[0] for row in chest_bindings]
+    remaining=[row[1] for row in chest_bindings]
     emote_fn=min((fn for fn in structure['files'][main_name]['functions'] if mi['reportSendSticker']+'({' in source[fn['start']:fn['end']]),key=lambda fn:fn['end']-fn['start'])
     emote_text=source[emote_fn['start']:emote_fn['end']]
     assert 'e.src' in emote_text and '.push({' in emote_text,'manual emote rendering contract'
@@ -48,8 +49,10 @@ def integrate(project, base, frontend, structure, shared, main, panel, main_name
     # Local-only selections must never be sent as account-owned room items.
     main=once(main,sync_call[0],store+'.isLoggedIn && !__lg.enabled.value && '+sync_call[1]+'(e.id);')
     native_invoke=mi.get('invoke$1',mi.get('invoke'))
-    assert 'Wn = pe(() =>' in source and 'Gn = pe(() =>' in source, 'chest readiness contract'
     # Counters, native persistence and logout remain byte-for-byte original.
+    # A bare forbidden response may be a version gate or gateway policy.
+    # Only explicit auth business codes or HTTP 401 invalidate credentials.
+    shared=once(shared,'c === 10002 || c === 10003 || r === 401 || r === 403','c === 10002 || c === 10003 || r === 401')
     # The official installer would replace this executable and lose integrations.
     shared = once(shared, 'function isAppUpdaterEnabled() {', 'function isAppUpdaterEnabled() {\n return false;')
     shared = once(shared, 'function isForceUpdateLocked() {', 'function isForceUpdateLocked() {\n return window.__WUWA_LOCAL_ATLAS__?.assistant?.updateRequired.value === true;')
@@ -95,7 +98,8 @@ localAtlasController.contextMenu=createDesktopContextMenu({invoke,request:(path,
     tab_text=source[tab_source['start']:tab_source['end']]
     lock_guard=re.search(r'if \(([\w$]+)\(\)\) \{',tab_text)
     assert lock_guard,'panel update-lock guard'
-    main=once(main,tab_text[:tab_text.index('rt.value')],tab_text[:tab_text.index('rt.value')].replace(lock_guard[0], 'if (e !== "console" && '+lock_guard[1]+'()) {'))
+    tab_state=re.search(r'([\w$]+)\.value = e,',tab_text)[1]
+    main=once(main,tab_text[:tab_text.index(tab_state+'.value')],tab_text[:tab_text.index(tab_state+'.value')].replace(lock_guard[0], 'if (e !== "console" && '+lock_guard[1]+'()) {'))
     panel_visible=re.search(r'([\w$]+)\.value = !0;',tab_text)[1]
     close_panel=min((fn for fn in structure['files'][main_name]['functions'] if '[panel] close failed' in source[fn['start']:fn['end']]),key=lambda fn:fn['end']-fn['start'])['name']
     code = f'''
@@ -105,7 +109,7 @@ localAtlasController.contextMenu=createDesktopContextMenu({invoke,request:(path,
  account:()=>String({store}.userInfo?.cuid||{store}.userInfo?.user_id||{store}.userInfo?.uid||'guest'),
  loggedIn:()=>{store}.isLoggedIn,blocked:()=>__lg.assistant.updateRequired.value||__lg.contextMenu.isOpen(),
  press:key=>{handlers[0]}(key,true),release:{handlers[1]},chestCost:{cost},
- chests:()=>({{left:{{remaining:Math.max(0,{remaining[0]}.value),ready:Wn.value}},right:{{remaining:Math.max(0,{remaining[1]}.value),ready:Gn.value}},cooldown:1800000,busy:{busy[1]}.value||{busy[2]}.value}}),
+ chests:()=>({{left:{{remaining:Math.max(0,{remaining[0]}.value),ready:{ready_names[0]}.value}},right:{{remaining:Math.max(0,{remaining[1]}.value),ready:{ready_names[1]}.value}},cooldown:1800000,busy:{busy[1]}.value||{busy[2]}.value}}),
  emotes:()=>{emote_items}.value.map(item=>({{...item,src:{emote_url}('emote/'+item.name)}})),
  sendEmote:item=>{emote_fn['name']}(item),
  monitors:__assistantMonitors,restoreMonitor:__assistantRestoreMonitor,

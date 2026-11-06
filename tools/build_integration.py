@@ -71,7 +71,7 @@ function localStartOnlineServices() {
 }''')
 for name in ['invoke$1', 'invoke']:
     anchor = f'async function {name}(e, t = {{}}, n) {{'
-    if name=='invoke$1' and config['client_version']=='1.0.3':
+    if name=='invoke$1' and config['client_version'] in ('1.0.3','1.0.4'):
         assert anchor not in shared
         continue
     shared = replace(shared, anchor, anchor + '\n window.__WUWA_LOCAL_ATLAS__?.checkInvoke(e, t);')
@@ -229,6 +229,11 @@ edits.append((footer_pos,footer_pos,project_footer))
 
 module_component=next(c for c in p['components'] if c['name']=='MainModulePanel')
 module_text=panel[module_component['start']:module_component['end']]
+nav_iter=re.search(r'([\w$]+)\(([\w$]+)\(([\w$]+)\), ([\w$]+) =>',module_text)
+assert nav_iter,'navigation iterator changed'
+nav_render,nav_unref,nav_items,nav_item=nav_iter.groups()
+nav_state=re.search(r'([\w$]+)\.activeTab === "bag"',module_text)[1]
+nav_label=re.search(r'return ([\w$]+)\.key === "toggle"',module_text)[1]
 console_component=f'''
 const __ConsolePage={pi['defineComponent']}({{
  __name:'WuwaNativeConsole',setup(){{
@@ -238,12 +243,12 @@ const __ConsolePage={pi['defineComponent']}({{
   return ()=>{h}('div',{{class:'module-block',style:{{height:'100%',minHeight:0,position:'relative',overflow:'hidden',paddingTop:'48px'}}}},[{h}('div',{{ref:target,style:{{height:'100%',minHeight:0}}}})]);
  }}
 }});
-const __consoleTabs={pi['computed']}(()=>{pi['unref']}(ko).flatMap(item=>item.key==='setting'?[{{key:'console',labelKey:'console'}},item]:[item]));
+const __consoleTabs={pi['computed']}(()=>{pi['unref']}({nav_items}).flatMap(item=>item.key==='setting'?[{{key:'console',labelKey:'console'}},item]:[item]));
 '''
 edits.append((module_component['body']+1,module_component['body']+1,console_component))
-icon_match=re.search(re.escape(h)+r'\("span", \{\s*class: [\w$]+\(\["tab-btn__icon", `tab-btn__icon--\$\{l.key\}`\]\)\s*\}, null, 2\)',module_text)
+icon_match=re.search(re.escape(h)+r'\("span", \{\s*class: [\w$]+\(\["tab-btn__icon", `tab-btn__icon--\$\{'+re.escape(nav_item)+r'.key\}`\]\)\s*\}, null, 2\)',module_text)
 assert icon_match,'native navigation icon layout changed'
-console_icon=f'''l.key==='console'?({pi['openBlock']}(),{pi['createElementBlock']}('svg',{{key:'console-icon',class:'tab-btn__icon tab-btn__icon--console',viewBox:'0 0 40 54','aria-hidden':'true','data-console-icon':'sliders',style:{{color:s.activeTab==='console'?'#9c6541':'#f4d5a5'}}}},[
+console_icon=f'''{nav_item}.key==='console'?({pi['openBlock']}(),{pi['createElementBlock']}('svg',{{key:'console-icon',class:'tab-btn__icon tab-btn__icon--console',viewBox:'0 0 40 54','aria-hidden':'true','data-console-icon':'sliders',style:{{color:{nav_state}.activeTab==='console'?'#9c6541':'#f4d5a5'}}}},[
  {h}('rect',{{x:7,y:15,width:26,height:25,rx:5,fill:'none',stroke:'currentColor','stroke-width':2.5}}),
  {h}('path',{{d:'M14 21v13M20 21v13M26 21v13',fill:'none',stroke:'currentColor','stroke-width':2.2,'stroke-linecap':'round'}}),
  {h}('circle',{{cx:14,cy:25,r:2.6,fill:'currentColor'}}),{h}('circle',{{cx:20,cy:30,r:2.6,fill:'currentColor'}}),{h}('circle',{{cx:26,cy:24,r:2.6,fill:'currentColor'}})
@@ -251,9 +256,9 @@ console_icon=f'''l.key==='console'?({pi['openBlock']}(),{pi['createElementBlock'
 pos=module_component['start']+icon_match.start()
 edits.append((pos,module_component['start']+icon_match.end(),console_icon))
 for old,new in [
- ('return T.key === "toggle"','return T.key === "console" ? "控制台" : T.key === "toggle"'),
- ('Se(p(ko),','Se(__consoleTabs.value,'),
- ('s.activeTab === "bag" ?',f's.activeTab === "console" ? ({pi["openBlock"]}(),{pi["createBlock"]}(__ConsolePage,{{key:"console"}})) : s.activeTab === "bag" ?')]:
+ (f'return {nav_label}.key === "toggle"',f'return {nav_label}.key === "console" ? "控制台" : {nav_label}.key === "toggle"'),
+ (f'{nav_render}({nav_unref}({nav_items}),',f'{nav_render}(__consoleTabs.value,'),
+ (f'{nav_state}.activeTab === "bag" ?',f'{nav_state}.activeTab === "console" ? ({pi["openBlock"]}(),{pi["createBlock"]}(__ConsolePage,{{key:"console"}})) : {nav_state}.activeTab === "bag" ?')]:
     assert module_text.count(old)==1,('native console anchor',old)
     pos=module_component['start']+module_text.index(old)
     edits.append((pos,pos+len(old),new))
@@ -263,10 +268,10 @@ login_guard='if (!'+pi['globalStore']+'.isLoggedIn)'
 assert bag_text.count(login_guard)==2,'preset login guard layout changed'
 for match in re.finditer(re.escape(login_guard),bag_text):
     edits.append((bag_component['start']+match.start(),bag_component['start']+match.end(),'if (!'+pi['globalStore']+'.isLoggedIn && !__lg.enabled.value)'))
-delete_guard='if (r.stopPropagation(), !'+pi['globalStore']+'.isLoggedIn)'
+delete_guard=re.search(r'if \([\w$]+\.stopPropagation\(\), !'+re.escape(pi['globalStore'])+r'\.isLoggedIn\)',bag_text)[0]
 assert bag_text.count(delete_guard)==1,'preset delete login guard changed'
 pos=bag_component['start']+bag_text.index(delete_guard)
-edits.append((pos,pos+len(delete_guard),'if (r.stopPropagation(), !'+pi['globalStore']+'.isLoggedIn && !__lg.enabled.value)'))
+edits.append((pos,pos+len(delete_guard),delete_guard[:-1]+' && !__lg.enabled.value)'))
 
 # Reuse the original atlas+bag merge so collection ownership is identical to
 # the per-rarity counts. Use the category list before its search/subfilters.
@@ -362,7 +367,7 @@ assert match, 'Favorite toggle layout changed'
 panel = panel[:match.start()] + f'__lg.enabled.value ? __lg.favorite({match[3]}.item.asset_id,!{match[1]}.value) : ' + panel[match.start():]
 
 from integrate_assistant import integrate
-assert config['client_version'] in ('1.0.2','1.0.3'), 'Desktop assistant requires a verified adapter'
+assert config['client_version'] in ('1.0.2','1.0.3','1.0.4'), 'Desktop assistant requires a verified adapter'
 shared, main, panel = integrate(PROJECT, BASE, frontend, structure, shared, main, panel, main_name, panel_name)
 # The original native update window supplies a compact separate surface. Its
 # official installer UI must never run alongside the variant's own updater.

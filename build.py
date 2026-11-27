@@ -8,8 +8,9 @@ SUPPORTED_BASES={
     '099b62be14efe2cc99bb0ad3d37860488c42fb0f4e6282b5687e6335ab178573':'1.0.2',
     'cedc37d0c11d112f4d933647fb6cf00e1dca847fc763250984c647080f849080':'1.0.3',
     'ee829c55916619ea2882e4a13546cbaf2f880363237608285105c7a4958e70b3':'1.0.4',
+    '06a7222645e5da3a86baeaea3bb61a1f63c0408df1e21d5b985a9eb01054b7ae':'1.0.5',
 }
-MOD_VERSION='1.3.8'
+MOD_VERSION='1.3.9'
 
 def copy_if_changed(source, destination):
     source, destination = Path(source), Path(destination)
@@ -29,7 +30,8 @@ def main():
     args=ap.parse_args()
     digest=hashlib.sha256(args.official.read_bytes()).hexdigest()
     assert digest in SUPPORTED_BASES,'Unknown official binary: adapter validation is required before replacement'
-    build=PROJECT/'build';base=build/('base-'+digest[:16]);payload=build/'payload'
+    build=Path(os.environ.get('WUWA_BUILD_ROOT',PROJECT/'build')).resolve()
+    base=build/('base-'+digest[:16]);payload=build/'payload'
     base.mkdir(parents=True,exist_ok=True);payload.mkdir(exist_ok=True)
     if args.official.resolve() != (base/'WuwaTappo.official.exe').resolve():
         shutil.copy2(args.official,base/'WuwaTappo.official.exe')
@@ -98,6 +100,6 @@ def main():
     for name in ('VCRUNTIME140.dll','VCRUNTIME140_1.dll'):
         shutil.copy2(payload/'_internal'/name,payload/name)
     if args.iscc:
-        run([args.iscc,PROJECT/'installer/setup.iss'])
+        run([args.iscc,'/DPayloadDir='+str(payload),PROJECT/'installer/setup.iss'])
 
 if __name__=='__main__':main()

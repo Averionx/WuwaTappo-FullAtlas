@@ -32,7 +32,7 @@ def integrate(project, base, frontend, structure, shared, main, panel, main_name
     chest = min((fn for fn in structure['files'][main_name]['functions'] if 'openChest failed' in source[fn['start']:fn['end']]), key=lambda fn:fn['end']-fn['start'])
     chest_text = source[chest['start']:chest['end']]
     cost = re.search(re.escape(store)+r'\.totalClickCount < ([\w$]+)', chest_text)[1]
-    animation = re.search(r'const \w+ = ([\w$]+)\(e\);', chest_text)[1]
+    animation = re.search(r'const [\w$]+ = [\w$]+\(e\);', chest_text)[0]
     busy=re.search(r'if \(([\w$]+)\.value \|\| ([\w$]+)\.value\) return;',chest_text)
     assert busy,'chest busy contract'
     chest_bindings=re.findall(r'([\w$]+) = '+re.escape(mi['computed'])+r'\(\(\) =>[^\n]+\? !0 : ([\w$]+)\.value <= 0\)',source)
@@ -68,9 +68,11 @@ localAtlasController.contextMenu=createDesktopContextMenu({invoke,request:(path,
                   'Promise.all([localAtlasController.ready,localAtlasController.assistant.ready]).then(() => { localStartOnlineServices(); return bootstrap(); })')
     # Record only the original successful server result, before its popup. The
     # recorder catches its own errors and never retries a chest transaction.
-    main = once(main, 'const f = '+animation+'(e);', 'const __assistantAttempt=__lg.assistant.beginChest(e);\n        const f = '+animation+'(e);')
-    main = once(main, '          '+mi['reportRewardClaimSucc']+'({\n            itemId: M.data.asset_id,',
-        '          __lg.assistant.chestSucceeded(__assistantAttempt,M.data);\n          '+mi['reportRewardClaimSucc']+'({\n            itemId: M.data.asset_id,')
+    main = once(main, animation, 'const __assistantAttempt=__lg.assistant.beginChest(e);\n        '+animation)
+    reward = re.search(r'          '+re.escape(mi['reportRewardClaimSucc'])+r'\(\{\n            itemId: ([\w$]+)\.data\.asset_id,', chest_text)
+    assert reward, 'chest reward contract'
+    main = once(main, reward[0],
+        f'          __lg.assistant.chestSucceeded(__assistantAttempt,{reward[1]}.data);\n'+reward[0])
     room = fields['currentRoomId']
     members = re.search(r'^([\w$]+)\.value', fields['roomMembers'])[1]+'.value'
     input_room = fields['roomIdInput']
@@ -141,9 +143,11 @@ localAtlasController.contextMenu=createDesktopContextMenu({invoke,request:(path,
     monitor = (base/'readable_js/assets'/monitor_name).read_text(encoding='utf-8')
     tab_guard='return e === "bag" || e === "atlas" || e === "exchange" || e === "room" || e === "setting"'
     monitor=once(monitor,tab_guard,tab_guard+' || e === "console"')
-    monitor=once(monitor,'return Fe() ? await u("is_elevated_autostart_enabled") : await X()',
+    startup_status=re.search(r'return [\w$]+\(\) \? await [\w$]+\("is_elevated_autostart_enabled"\) : await [\w$]+\(\)',monitor)[0]
+    monitor=once(monitor,startup_status,
                  'return (await window.__WUWA_LOCAL_ATLAS__.request("/startup",{action:"status"})).enabled')
-    monitor=once(monitor,'async function _n(e) {','async function _n(e) {\n return window.__WUWA_LOCAL_ATLAS__.request("/startup",{action:e?"enable":"disable"});')
+    startup_set=re.search(r'(async function [\w$]+\(e\) \{)\s*try \{\s*if \([\w$]+\(\)\) \{\s*await [\w$]+\("set_elevated_autostart",',monitor)[1]
+    monitor=once(monitor,startup_set,startup_set+'\n return window.__WUWA_LOCAL_ATLAS__.request("/startup",{action:e?"enable":"disable"});')
     switch_match=re.search(r'const ([\w$]+) = \(([\w$]+) \+ 1\) % ([\w$]+)\.length,',monitor)
     assert switch_match,'monitor cycle contract'
     idx,old_idx,monitors=switch_match.groups()
@@ -162,11 +166,10 @@ localAtlasController.contextMenu=createDesktopContextMenu({invoke,request:(path,
     (frontend/'assets'/monitor_name).write_text(monitor, encoding='utf-8')
     export_text=monitor[monitor.rfind('export {'):]
     exported=dict(re.findall(r'([\w$]+) as ([\w$]+)',export_text))
-    if structure['shared']=='index-CuzHFfJW.js':
-        available=re.search(r'async function ([\w$]+)\(\) \{\s*const ([\w$]+) = await [\w$]+\(\),\s*([\w$]+) = await [\w$]+\(\);\s*return [\w$]+\(\2, \3\)',monitor)[1]
-        available_export=exported[available]
-    else:
-        available_export='a'
+    available=re.findall(r'async function ([\w$]+)\(\) \{\s*const ([\w$]+) = await [\w$]+\(\),\s*([\w$]+) = await [\w$]+\(\);\s*return [\w$]+\(\2, \3\)\s*\}',monitor)
+    available_exports=[exported[name] for name, *_ in available if name in exported]
+    assert len(available_exports)==1, 'available monitor enumeration binding changed'
+    available_export=available_exports[0]
     main = 'import {'+available_export+' as __assistantMonitors,'+exported[wrapper]+' as __assistantRestoreMonitor} from "./'+monitor_name+'";\n'+main
     h=pi['createBaseVNode']
     row=f'''{h}('div',{{class:'setting-item','data-desktop-assistant':'true'}},[{h}('div',{{class:'setting-label'}},[{h}('div',{{class:'setting-title'}},'挂机与统计'),{h}('div',{{class:'setting-sub'}},'后台点击、自动开箱、每日统计、房间历史与版本更新')]),{h}('button',{{class:'setting-btn',type:'button',onClick:()=>__lg.assistant.openPanel()}},'打开')]),'''

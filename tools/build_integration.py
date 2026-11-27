@@ -71,7 +71,7 @@ function localStartOnlineServices() {
 }''')
 for name in ['invoke$1', 'invoke']:
     anchor = f'async function {name}(e, t = {{}}, n) {{'
-    if name=='invoke$1' and config['client_version'] in ('1.0.3','1.0.4'):
+    if name=='invoke$1' and config['client_version'] in ('1.0.3','1.0.4','1.0.5'):
         assert anchor not in shared
         continue
     shared = replace(shared, anchor, anchor + '\n window.__WUWA_LOCAL_ATLAS__?.checkInvoke(e, t);')
@@ -144,8 +144,11 @@ insert_function(preset_loader['name'],f'if(__lg.enabled.value){{{f["presetListLo
 insert_function(atlas_loader['name'], f'if(__lg.enabled.value){{{atlas}=__lg.offlineData.value.atlas;{f["atlasListLoading"]}=false;return;}}')
 insert_function(activity_loader['name'], 'try {')
 edits.append((activity_loader['bodyEnd']-1,activity_loader['bodyEnd']-1,'}finally{if(__lg.enabled.value)__localRefresh();}'))
-for action in ['create-room', 'join-room']:
-    insert_function(m['cases'][action], f"if(__lg.enabled.value){{{mi['showToast']}('本地全图鉴已开启，无法进入联机。请先关闭开关。');return;}}")
+room_actions = ['create-room', 'join-room']
+if config['client_version'] == '1.0.5':
+    room_actions.append('random-join-room')
+for room_handler in dict.fromkeys(m['cases'][action] for action in room_actions):
+    insert_function(room_handler, f"if(__lg.enabled.value){{{mi['showToast']}('本地全图鉴已开启，无法进入联机。请先关闭开关。');return;}}")
 select_name = m['cases']['select-appearance']
 param = re.search(r'function\s+' + re.escape(select_name) + r'\((\w+)', main).group(1)
 select_function = named(m, select_name)
@@ -367,7 +370,7 @@ assert match, 'Favorite toggle layout changed'
 panel = panel[:match.start()] + f'__lg.enabled.value ? __lg.favorite({match[3]}.item.asset_id,!{match[1]}.value) : ' + panel[match.start():]
 
 from integrate_assistant import integrate
-assert config['client_version'] in ('1.0.2','1.0.3','1.0.4'), 'Desktop assistant requires a verified adapter'
+assert config['client_version'] in ('1.0.2','1.0.3','1.0.4','1.0.5'), 'Desktop assistant requires a verified adapter'
 shared, main, panel = integrate(PROJECT, BASE, frontend, structure, shared, main, panel, main_name, panel_name)
 # The original native update window supplies a compact separate surface. Its
 # official installer UI must never run alongside the variant's own updater.

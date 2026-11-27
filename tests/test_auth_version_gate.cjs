@@ -1,5 +1,5 @@
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict'),acorn=require('../tools/acorn.cjs');
-const root=path.resolve(__dirname,'../build');
+const root=path.resolve(process.env.WUWA_BUILD_ROOT||path.join(__dirname,'../build'));
 const manifest=JSON.parse(fs.readFileSync(path.join(root,'build_manifest_v2.json'),'utf8'));
 const source=fs.readFileSync(path.join(root,'frontend_v2/assets',manifest.shared),'utf8');
 const ast=acorn.parse(source,{ecmaVersion:'latest',sourceType:'module'});
@@ -15,7 +15,7 @@ const context=vm.createContext({console,Promise,Map,Error,Number,
  parseApiEnvelope:data=>data&&Number.isFinite(data.code)?data:null,
  parseApiErrorCode:e=>e.code,MAINTENANCE_HTTP_STATUS:503,
  globalStore:{},useLoading:()=>({hideLoading(){}}),ApiBusinessError:BusinessError,
- reportApiBusinessFailure(){},logApiBusinessError(){},logApiNetworkError(){},showApiErrorToast(){},reportAlert(){},
+ reportApiBusinessFailure(){},logApiBusinessError(){},logApiNetworkError(){},logTracedApiResult(){},showApiErrorToast(){},reportAlert(){},
  isNetworkApiError:()=>false,reportNetworkTransportFailure(){},
 });
 vm.runInContext((source.slice(handler.start,handler.end)+'\n'+source.slice(request.start,request.end)+'\nnew Request({});').replaceAll('import.meta.url','"https://test.invalid/"'),context);
@@ -31,7 +31,7 @@ vm.runInContext((source.slice(handler.start,handler.end)+'\n'+source.slice(reque
  const main=fs.readFileSync(path.join(root,'frontend_v2/assets',manifest.main),'utf8');
  assert(main.includes('__lg.contextMenu.popup('));assert(main.includes("openConsole:async()=>"));
  assert(main.includes('__lg.contextMenu?.isOpen()'));
- assert(main.includes('chestSucceeded(__assistantAttempt,M.data)'));
+ assert.match(main,/chestSucceeded\(__assistantAttempt,[\w$]+\.data\)/);
  assert(main.includes('__lg.assistant.physicalKey(e.payload)'));
  console.log('Generated frontend passed: 403/version denial retains auth; 401 and explicit invalid-token codes clear auth; main/panel syntax and integration contracts valid.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

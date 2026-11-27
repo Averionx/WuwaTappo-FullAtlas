@@ -1,17 +1,20 @@
 """Build a private UI subset of the original OFL font; no system installation."""
 from pathlib import Path
+import os
 from fontTools import subset
 from fontTools.ttLib import TTFont
 
 def prepare(project):
-    project=Path(project);output=project/'build/ui_fonts';output.mkdir(exist_ok=True)
+    project=Path(project)
+    build=Path(os.environ.get('WUWA_BUILD_ROOT',project/'build'))
+    output=build/'ui_fonts';output.mkdir(exist_ok=True)
     characters=set(chr(i) for i in range(32,127))
     for name in ('update_progress.py','desktop_updater.py'):
         characters.update((project/'src'/name).read_text(encoding='utf-8'))
     characters.update('✓·…→更新版本正在下载校验解压备份替换启动完成请稍候保留返回软件关闭窗口退出总进度预览')
     notices=[]
     for style in ('Medium','Bold'):
-        source=next((project/'build/frontend_v2/assets').glob('975MaruSC-'+style+'-*.woff2'))
+        source=next((build/'frontend_v2/assets').glob('975MaruSC-'+style+'-*.woff2'))
         font=TTFont(source)
         notice=(font['name'].getDebugName(0) or '')+'\n\n'+(font['name'].getDebugName(13) or '')
         assert 'SIL OPEN FONT LICENSE' in notice
